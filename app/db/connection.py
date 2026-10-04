@@ -34,6 +34,9 @@ def get_connection(
     return conn
 
 
+get_db_connection = get_connection
+
+
 class DatabaseConnection:
     """Database connection wrapper with auto-initialization."""
 

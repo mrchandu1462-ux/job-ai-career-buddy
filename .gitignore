@@ -38,6 +38,8 @@ htmlcov/
 *.sqlite
 data/
 artifacts/
+logs/
+*.log
 
 # Environment Variables & Secrets
 .env

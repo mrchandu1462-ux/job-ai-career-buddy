@@ -61,6 +61,29 @@ class FreshnessStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class FreshnessBucket(str, Enum):
+    """Granular 24-hour publication freshness buckets."""
+
+    LE_1_HOUR = "<= 1 hour"
+    LE_3_HOURS = "<= 3 hours"
+    LE_6_HOURS = "<= 6 hours"
+    LE_12_HOURS = "<= 12 hours"
+    LE_24_HOURS = "<= 24 hours"
+    DAYS_1_3 = "1-3 days"
+    DAYS_3_7 = "3-7 days"
+    OLDER_7_DAYS = ">7 days"
+    UNKNOWN = "UNKNOWN"
+
+
+class FreshnessConfidence(str, Enum):
+    """Confidence tier in verified publication timestamp."""
+
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    UNKNOWN = "UNKNOWN"
+
+
 class AlertPriority(str, Enum):
     """Priority level for human review notification proposals."""
 
@@ -69,6 +92,30 @@ class AlertPriority(str, Enum):
     P2 = "P2"  # Published 1-3 days with strong match (>=80)
     P3 = "P3"  # Older or research opportunity
     UNKNOWN = "UNKNOWN"  # Unverified freshness or low match
+
+
+class JobPriorityCategory(str, Enum):
+    """Target opportunity classification priority category."""
+
+    CRITICAL = "CRITICAL"  # 🔥 Fresh <=24h + excellent match (>=88/90)
+    HIGH = "HIGH"  # 🟢 Fresh <=24h + strong match (>=75/80)
+    GOOD = "GOOD"  # 🔵 Good match (>=60)
+    MEDIUM = "MEDIUM"  # 🟡 Relevant / moderate match (>=60)
+    WATCHLIST = "WATCHLIST"  # ⭐ Watchlisted employer
+    LOW = "LOW"  # ⚪ Weak match (<50/60)
+    REJECTED = "REJECTED"  # ❌ Ineligible / incompatible
+    EXPIRED_STALE = "EXPIRED_STALE"  # 🔴 Outside freshness window / closed
+
+
+class AlertMode(str, Enum):
+    """Notification alert proposal filtering modes."""
+
+    CRITICAL_ONLY = "CRITICAL_ONLY"
+    HIGH_AND_CRITICAL = "HIGH_AND_CRITICAL"
+    ALL_MATCHED = "ALL_MATCHED"
+    WATCHLIST_COMPANIES = "WATCHLIST_COMPANIES"
+    DAILY_DIGEST = "DAILY_DIGEST"
+    HOURLY_CRITICAL = "HOURLY_CRITICAL"
 
 
 class WorkplaceType(str, Enum):
@@ -89,6 +136,15 @@ class VisaSponsorshipStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class VisaSponsorshipCategory(str, Enum):
+    """Explicit international visa sponsorship classification."""
+
+    SPONSORSHIP_CONFIRMED = "SPONSORSHIP_CONFIRMED"
+    SPONSORSHIP_POSSIBLE = "SPONSORSHIP_POSSIBLE"
+    SPONSORSHIP_UNKNOWN = "SPONSORSHIP_UNKNOWN"
+    SPONSORSHIP_NOT_SUPPORTED = "SPONSORSHIP_NOT_SUPPORTED"
+
+
 class SourceHealthStatus(str, Enum):
     """Operational health status of an external job source adapter."""
 
@@ -96,6 +152,37 @@ class SourceHealthStatus(str, Enum):
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
     UNKNOWN = "unknown"
+
+
+class FreshJobPriorityScore(BaseModel):
+    """Explainable 8-dimensional fresh job priority score breakdown (out of 100)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    freshness: float = Field(..., ge=0.0, le=25.0, description="Freshness component (max 25).")
+    technical_match: float = Field(..., ge=0.0, le=25.0, description="Technical skill match (max 25).")
+    role_match: float = Field(..., ge=0.0, le=15.0, description="Role alignment (max 15).")
+    project_relevance: float = Field(..., ge=0.0, le=10.0, description="Project alignment (max 10).")
+    fresher_fit: float = Field(..., ge=0.0, le=10.0, description="Experience / fresher fit (max 10).")
+    location_eligibility: float = Field(..., ge=0.0, le=5.0, description="Location & work eligibility (max 5).")
+    company_confidence: float = Field(..., ge=0.0, le=5.0, description="Company watchlist & confidence (max 5).")
+    application_accessibility: float = Field(..., ge=0.0, le=5.0, description="Direct application portal clarity (max 5).")
+    total_score: float = Field(..., ge=0.0, le=100.0, description="Total explainable score (max 100).")
+    category: JobPriorityCategory = Field(default=JobPriorityCategory.LOW)
+    is_fresh_24h_match: bool = Field(default=False, description="Flag for special '🚨 FRESH 24H MATCH' badge.")
+
+
+class CompanyWatchlistRecord(BaseModel):
+    """Configured target semiconductor company on watchlist."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: int | None = None
+    company_name: str = Field(..., min_length=1)
+    is_active: bool = Field(default=True)
+    priority_level: str = Field(default="HIGH", description="'CRITICAL', 'HIGH', 'STANDARD'")
+    notes: str | None = None
+    created_at: str
 
 
 class JobSourceRunRecord(BaseModel):
@@ -134,6 +221,12 @@ class JobAlertRecord(BaseModel):
     status: str = Field(default="proposed", description="'proposed', 'approved', 'dismissed'")
     notification_proposal_id: int | None = Field(default=None, description="Linked proposed_schedule_notifications id.")
     created_at: str
+    priority_category: JobPriorityCategory = JobPriorityCategory.LOW
+    is_fresh_24h_match: bool = False
+    first_notified_at: str | None = None
+    last_notified_at: str | None = None
+    notification_count: int = 0
+
 
 
 
@@ -186,21 +279,85 @@ class NormalizedJob(BaseModel):
     published_at: str | None = Field(
         default=None, description="ISO-8601 publication timestamp if verified by source."
     )
+    posted_at: str | None = Field(
+        default=None, description="Explicit posting timestamp if provided."
+    )
+    discovered_at: str | None = Field(
+        default=None, description="Timestamp when first detected by career buddy."
+    )
+    source_timestamp: str | None = Field(
+        default=None, description="Raw timestamp string provided by source."
+    )
     freshness_status: str | None = Field(
         default="unknown", description="Freshness category (fresh_0_6_hours, fresh_6_24_hours, recent_1_3_days, older, unknown)."
+    )
+    freshness_bucket: str | None = Field(
+        default="UNKNOWN", description="Granular freshness bucket (<= 1 hour, <= 3 hours, <= 6 hours, <= 12 hours, <= 24 hours, etc)."
+    )
+    freshness_confidence: str | None = Field(
+        default="LOW", description="Timestamp confidence: HIGH, MEDIUM, LOW, UNKNOWN."
+    )
+    timestamp_source: str | None = Field(
+        default="unverified", description="Provenance of timestamp (e.g., official_listing, feed_metadata, unverified)."
     )
     freshness_age_hours: float | None = Field(
         default=None, ge=0.0, description="Calculated age in hours at discovery."
     )
+    region: str | None = Field(
+        default="india", description="Market classification: india, overseas, global."
+    )
+    city: str | None = Field(
+        default=None, description="Specific city if identified."
+    )
     workplace_type: str | None = Field(
         default="unknown", description="Workplace arrangement: onsite, hybrid, remote, unknown."
+    )
+    remote_type: str | None = Field(
+        default="unknown", description="Remote classification alias."
     )
     visa_sponsorship: str | None = Field(
         default="unknown", description="Visa sponsorship status if explicitly stated."
     )
+    visa_status: str | None = Field(
+        default="unknown", description="Visa category alias."
+    )
+    sponsorship_confidence: str | None = Field(
+        default="LOW", description="Sponsorship confidence: HIGH, MEDIUM, LOW."
+    )
+    source_name: str | None = Field(
+        default=None, description="Adapter / source identifier."
+    )
+    source_type: str | None = Field(
+        default="career_pages", description="Source classification: rss, api, public_feed, career_pages, manual."
+    )
+    source_job_id: str | None = Field(
+        default=None, description="External job identifier from source."
+    )
+    canonical_url: str | None = Field(
+        default=None, description="Normalized canonical link."
+    )
     source_references: list[str] = Field(
         default_factory=list, description="All sources that reported this job posting."
     )
+    first_notified_at: str | None = Field(
+        default=None, description="Timestamp of first proposal notification."
+    )
+    last_notified_at: str | None = Field(
+        default=None, description="Timestamp of most recent proposal notification."
+    )
+    notification_count: int = Field(
+        default=0, ge=0, description="Number of times candidate was alerted."
+    )
+    priority_score: float = Field(
+        default=0.0, ge=0.0, le=100.0, description="Explainable 8-dimensional priority score (0-100)."
+    )
+    priority_category: str = Field(
+        default="LOW", description="Classification: CRITICAL, HIGH, MEDIUM, LOW, EXPIRED_STALE."
+    )
+    is_watchlist: bool = Field(
+        default=False, description="Whether company is on candidate watchlist."
+    )
+
 
 
 
@@ -277,6 +434,41 @@ class NotificationRecord(BaseModel):
     message: str = Field(..., min_length=1, description="Notification body content.")
     created_at: str = Field(..., description="ISO-8601 creation timestamp.")
     is_read: bool = Field(default=False, description="Read/unread status.")
+
+
+class DeliveryStatus(str, Enum):
+    """Lifecycle status of email notification delivery."""
+
+    PROPOSED = "PROPOSED"
+    QUEUED = "QUEUED"
+    SENDING = "SENDING"
+    SENT = "SENT"
+    FAILED = "FAILED"
+    SUPPRESSED = "SUPPRESSED"
+
+
+class EmailDeliveryRecord(BaseModel):
+    """Audit record for email notification deliveries."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: int | None = None
+    notification_id: int | None = Field(default=None, description="Linked proposed_schedule_notifications id.")
+    job_id: int | None = Field(default=None, description="Linked normalized_jobs id.")
+    application_id: int | None = Field(default=None, description="Linked applications id.")
+    recipient: str = Field(..., min_length=1, description="Target recipient email address.")
+    priority: str = Field(..., description="CRITICAL, HIGH, APPLY, WATCH, DIGEST, etc.")
+    subject: str = Field(..., min_length=1, description="Subject line of email.")
+    delivery_status: DeliveryStatus = Field(default=DeliveryStatus.PROPOSED, description="Delivery status.")
+    provider: str = Field(..., description="Provider identifier (smtp, console, sendgrid, mock).")
+    provider_message_id: str | None = Field(default=None, description="Message ID returned by provider.")
+    attempt_count: int = Field(default=0, ge=0, description="Delivery attempt count.")
+    created_at: str = Field(..., description="ISO-8601 creation timestamp.")
+    queued_at: str | None = None
+    sent_at: str | None = None
+    failed_at: str | None = None
+    last_error: str | None = None
+    fingerprint: str | None = Field(default=None, description="Job / digest fingerprint for deduplication.")
 
 
 # -------------------------------------------------------------------------

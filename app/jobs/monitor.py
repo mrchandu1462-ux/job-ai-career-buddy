@@ -1,33 +1,69 @@
-"""CLI and Automation Entrypoint for Fresh Job Monitoring Engine (Phase 5).
+"""CLI entrypoint for 24-Hour Job Monitoring Engine (Phase 3).
 
 Usage:
-    python -m app.jobs.monitor
-    python -m app.jobs.monitor --region india
-    python -m app.jobs.monitor --region overseas
-    python -m app.jobs.monitor --fresh-only
-    python -m app.jobs.monitor --dry-run
-    python -m app.jobs.monitor --limit 20
+    # Single-shot scan (default: 24h freshness, all regions)
+    python -m app.jobs.monitor --once --region all --hours 24
+
+    # Run continuous monitoring every 60 minutes
+    python -m app.jobs.monitor --region all --hours 24 --interval 60
+
+    # Run continuous monitoring for India semiconductor hubs
+    python -m app.jobs.monitor --region india --hours 24 --interval 60
+
+    # Dry-run mode without database persistence
+    python -m app.jobs.monitor --once --dry-run
 """
 
 import argparse
+import logging
+import sqlite3
 import sys
+from datetime import UTC, datetime
 
 from app.db.connection import get_connection
-from app.jobs.monitoring_service import FreshJobMonitoringService
-from app.profile.loader import load_candidate_profile, load_fact_bank
+from app.db.schema import create_schema
+from app.jobs.scheduler import (
+    DEFAULT_INTERVAL_MINUTES,
+    SCAN_LIMIT,
+    SCAN_MIN_SCORE,
+    SCAN_WINDOW_HOURS,
+    ScannerDaemon,
+    _print_cycle_report,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="job-ai-monitor",
-        description="Fresh Job Monitoring & Alert Engine for VLSI / Semiconductor Opportunities.",
+        description="Phase 3 — Continuous 24-Hour Fresh Job Monitor & Scheduler.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Execute exactly one scan cycle, then exit.",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        metavar="MINUTES",
+        help=f"Minutes between scan cycles when running continuously (e.g. {DEFAULT_INTERVAL_MINUTES}). If omitted, executes a single cycle.",
     )
     parser.add_argument(
         "--region",
         type=str,
-        choices=["all", "india", "overseas"],
         default="all",
+        choices=["all", "india", "overseas"],
         help="Geographic focus region (default: all).",
+    )
+    parser.add_argument(
+        "--hours",
+        type=float,
+        default=SCAN_WINDOW_HOURS,
+        help=f"Freshness window in hours (default: {SCAN_WINDOW_HOURS}).",
     )
     parser.add_argument(
         "--fresh-only",
@@ -35,15 +71,40 @@ def parse_args() -> argparse.Namespace:
         help="Only process and alert on jobs published strictly within <= 24 hours.",
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Execute monitoring cycle without persisting jobs or creating notifications.",
+        "--min-score",
+        type=float,
+        default=SCAN_MIN_SCORE,
+        help=f"Minimum 8-D priority score for notifications (default: {SCAN_MIN_SCORE}).",
     )
     parser.add_argument(
         "--limit",
         type=int,
-        default=50,
-        help="Maximum jobs to fetch per adapter (default: 50).",
+        default=SCAN_LIMIT,
+        help=f"Maximum jobs to fetch per adapter (default: {SCAN_LIMIT}).",
+    )
+    parser.add_argument(
+        "--alert-mode",
+        type=str,
+        default="HIGH_AND_CRITICAL",
+        choices=["CRITICAL_ONLY", "HIGH_AND_CRITICAL", "ALL_MATCHED", "WATCHLIST_COMPANIES", "DAILY_DIGEST", "HOURLY_CRITICAL"],
+        help="Alert filtering mode (default: HIGH_AND_CRITICAL).",
+    )
+    parser.add_argument(
+        "--company",
+        type=str,
+        default=None,
+        help="Optional company filter string (e.g. Qualcomm, NVIDIA).",
+    )
+    parser.add_argument(
+        "--role",
+        type=str,
+        default=None,
+        help="Optional role title filter string (e.g. 'Design Verification').",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Execute cycle without persisting jobs or creating notifications.",
     )
     parser.add_argument(
         "--db-path",
@@ -54,82 +115,75 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def print_banner(dry_run: bool, region: str, fresh_only: bool) -> None:
-    mode_str = "[DRY RUN — NO PERSISTENCE]" if dry_run else "[LIVE PERSISTENCE & ALERTING]"
-    print("=" * 72)
-    print(f"JOB-AI CAREER BUDDY — FRESH JOB MONITORING ENGINE {mode_str}")
-    print(f"Target Region: {region.upper()} | Freshness Filter: {'<= 24 Hours' if fresh_only else 'All Discovery'}")
-    print("=" * 72)
-
-
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
+        except (AttributeError, OSError):
             pass
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     args = parse_args()
 
+    if args.interval is not None and args.interval < 1:
+        print("[ERROR] --interval must be >= 1 minute.", file=sys.stderr)
+        return 2
+
+    effective_interval = args.interval or DEFAULT_INTERVAL_MINUTES
+    effective_hours = 24.0 if args.fresh_only else args.hours
+
     conn = get_connection(db_path=args.db_path, auto_init=True)
-    profile = load_candidate_profile()
-    fact_bank = load_fact_bank()
+    try:
+        create_schema(conn)
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("Schema init warning (non-fatal): %s", exc)
 
-    print_banner(dry_run=args.dry_run, region=args.region, fresh_only=args.fresh_only)
-
-    monitor_service = FreshJobMonitoringService(
-        conn=conn,
-        profile=profile,
-        fact_bank=fact_bank,
-    )
-
-    report = monitor_service.run_monitoring_cycle(
-        region=args.region,
-        fresh_only=args.fresh_only,
-        dry_run=args.dry_run,
-        limit=args.limit,
-    )
-
-    print("\n--- SOURCE ADAPTER HEALTH AUDIT ---")
-    for name, health in report.source_health.items():
-        status_icon = "[OK]" if health["status"] == "success" else "[FAILED]"
-        print(
-            f"  {status_icon:8} {name:32} | Discovered: {health['jobs_discovered']:2} | "
-            f"Fresh (<24h): {health['fresh_count']:2} | Latency: {health['duration_ms']:.1f}ms"
+    try:
+        daemon = ScannerDaemon(
+            conn=conn,
+            interval_minutes=effective_interval,
+            region=args.region,
+            hours=effective_hours,
+            min_score=args.min_score,
+            limit=args.limit,
+            dry_run=args.dry_run,
+            alert_mode=args.alert_mode,
+            company_filter=args.company,
+            role_filter=args.role,
         )
-        if health.get("error"):
-            print(f"     [!] Error: {health['error']}")
 
-    print("\n--- MONITORING CYCLE RESULTS ---")
-    print(f"  * Run ID:                    {report.run_id}")
-    print(f"  * Sources Checked:           {report.sources_checked} (Success: {report.sources_successful}, Failed: {report.sources_failed})")
-    print(f"  * Total Raw Jobs Found:      {report.total_jobs_found}")
-    print(f"  * Unique Canonical Jobs:     {report.unique_jobs_ingested}")
-    print(f"  * Verified Fresh (<24h):     {report.fresh_24h_jobs_count}")
-    print(f"  * Priority P0 Opportunities: {report.p0_count}")
-    print(f"  * Priority P1 Opportunities: {report.p1_count}")
-    print(f"  * Priority P2 Opportunities: {report.p2_count}")
-    print(f"  * Priority P3 Opportunities: {report.p3_count}")
-    print(f"  * Notifications Proposed:    {report.notifications_generated}")
+        is_single_shot = args.once or (args.interval is None)
 
-    if report.alerts:
-        print("\n--- TOP OPPORTUNITY ALERTS ---")
-        for alert in report.alerts[:10]:
-            p_badge = f"[{alert.priority.value}]"
-            fresh_badge = f"({alert.freshness_status.value})"
+        if is_single_shot:
+            print("\n" + "=" * 70)
+            print("JOB-AI CAREER BUDDY  |  SINGLE-SHOT SCAN")
+            print(f"Region: {args.region.upper()} | Freshness Window: <={effective_hours}h | {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+            print("=" * 70)
+            try:
+                report = daemon.run_once()
+                _print_cycle_report(report)
+                print("\n[OK] Single scan complete.")
+                return 0
+            except RuntimeError as exc:
+                print(f"\n[LOCKED] {exc}", file=sys.stderr)
+                return 1
+        else:
             print(
-                f"  {p_badge:5} {alert.company:24} | {alert.title:35} | "
-                f"Score: {alert.match_score:4.1f}% | {fresh_badge}"
+                f"\n[INFO] Starting continuous scheduler | interval={effective_interval}m | "
+                f"region={args.region} | hours={effective_hours}h | dry_run={args.dry_run}"
             )
-
-    print("=" * 72)
-    if args.dry_run:
-        print("[INFO] Dry-run complete. No database records or notifications were created.")
-    else:
-        print("[OK] Monitoring cycle persisted. Review fresh opportunities in Streamlit Dashboard.")
-    print("=" * 72)
-
-    return 0
+            print("[INFO] Press Ctrl+C to stop.\n")
+            return daemon.run()
+    finally:
+        try:
+            conn.close()
+        except (sqlite3.Error, OSError) as close_exc:
+            logger.debug("Database close suppressed: %s", close_exc)
 
 
 

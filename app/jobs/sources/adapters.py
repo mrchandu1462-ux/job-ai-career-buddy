@@ -9,9 +9,14 @@ from typing import Any
 from app.jobs.models import SourceHealthStatus
 from app.jobs.sources.base import JobDiscoveryQuery, RawJobPayload
 
+#: Maximum wall-clock time allowed for a single adapter.fetch_jobs() call.
+#: Every network-backed adapter MUST honour this limit (e.g. via requests timeout=).
+FETCH_TIMEOUT_SECONDS: int = 30
 
 class JobSourceAdapter(ABC):
     """Abstract base class for modular job discovery source adapters."""
+
+    timeout_seconds: int = FETCH_TIMEOUT_SECONDS
 
     @property
     @abstractmethod
@@ -33,7 +38,14 @@ class JobSourceAdapter(ABC):
 
     @abstractmethod
     def fetch_jobs(self, query: JobDiscoveryQuery) -> list[RawJobPayload]:
-        """Fetch raw job postings matching query criteria."""
+        """Fetch raw job postings matching query criteria.
+
+        Implementation contract
+        -----------------------
+        Every network-backed implementation MUST complete within
+        ``FETCH_TIMEOUT_SECONDS`` (30 s).  Use explicit ``timeout=`` on any
+        ``requests.get()`` / ``httpx.get()`` call to enforce this.
+        """
 
     def health_status(self) -> SourceHealthStatus:
         """Return operational health status of this adapter."""

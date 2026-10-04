@@ -12,6 +12,7 @@ candidate:
     - "RTL Design Intern"
     - "VLSI Intern"
     - "Graduate Engineer Trainee"
+    - "Semiconductor Graduate Engineer"
 
   graduation_year: 2025
   experience_level: "Fresher / Entry-Level"
@@ -23,6 +24,11 @@ candidate:
       - "Chennai"
       - "Pune"
       - "Noida"
+      - "Gurugram"
+      - "Ahmedabad"
+      - "Mysuru"
+      - "Kochi"
+      - "Mumbai"
     overseas_enabled: true
     overseas_require_sponsorship: true
 

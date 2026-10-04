@@ -43,12 +43,23 @@ VLSI_SKILL_KEYWORDS = [
 ]
 
 
-def generate_job_fingerprint(company: str, title: str, location: str | None = None) -> str:
+def generate_job_fingerprint(
+    company: str,
+    title: str,
+    location: str | None = None,
+    published_at: str | None = None,
+    requisition_id: str | None = None,
+) -> str:
     """Generate a deterministic, lowercase slug fingerprint for job deduplication."""
     comp_clean = re.sub(r"[^\w]", "", company.lower())
     title_clean = re.sub(r"[^\w]", "", title.lower())
     loc_clean = re.sub(r"[^\w]", "", (location or "remote").lower())
-    return f"{comp_clean}-{title_clean}-{loc_clean}"
+    base = f"{comp_clean}-{title_clean}-{loc_clean}"
+    if requisition_id:
+        req_clean = re.sub(r"[^\w]", "", str(requisition_id).lower())
+        if req_clean:
+            return f"{base}-{req_clean}"
+    return base
 
 
 def extract_vlsi_skills(text: str) -> list[str]:
@@ -136,11 +147,13 @@ def normalize_job_listing(
     employment_type: str | None = "Full-time",
     source: str = "manual",
     application_url: str | None = None,
+    source_url: str | None = None,
     raw_job_id: int | None = None,
     published_at: str | None = None,
     workplace_type: str | None = None,
     visa_sponsorship: str | None = None,
     source_references: list[str] | None = None,
+    requisition_id: str | None = None,
 ) -> NormalizedJob:
     """Convert raw job details into a fully validated NormalizedJob record."""
     now_iso = datetime.now(UTC).isoformat()
@@ -159,7 +172,12 @@ def normalize_job_listing(
         ):
             employment_type = "Trainee"
 
-    fingerprint = generate_job_fingerprint(company=company, title=title, location=location)
+    fingerprint = generate_job_fingerprint(
+        company=company,
+        title=title,
+        location=location,
+        requisition_id=requisition_id,
+    )
 
     # Freshness calculation
     freshness_status, age_hours, _ = calculate_job_freshness(published_at)

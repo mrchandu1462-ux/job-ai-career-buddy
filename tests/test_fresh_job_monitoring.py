@@ -464,7 +464,7 @@ class TestCLIEntrypoint:
         test_db = str(tmp_path / "test_cli_live.db")
         monkeypatch.setattr(
             "sys.argv",
-            ["job-ai-monitor", "--region", "all", "--fresh-only", "--limit", "5", "--db-path", test_db],
+            ["job-ai-monitor", "--region", "all", "--fresh-only", "--dry-run", "--limit", "5", "--db-path", test_db],
         )
         exit_code = cli_main()
         assert exit_code == 0

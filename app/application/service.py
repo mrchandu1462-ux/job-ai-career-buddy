@@ -3,6 +3,10 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.application.intelligence import (
+    ApplicationIntelligenceService,
+    ApplicationPackage,
+)
 from app.application.matcher import ApplicationMatcher
 from app.application.models import (
     ApplicationPackageDetail,
@@ -60,6 +64,7 @@ class ApplicationPipelineService:
         self.resume_repo = ResumeRepository(conn)
 
         # Subsystems & Services
+        self.intelligence = ApplicationIntelligenceService(fact_bank, profile)
         self.matcher = ApplicationMatcher(profile, fact_bank, self.career_repo)
         self.resume_engine = ResumeTailoringEngine(
             conn=conn,
@@ -76,6 +81,7 @@ class ApplicationPipelineService:
             conn, self.job_repo, self.resume_repo, self.career_repo
         )
         self.notification_service = ScheduleNotificationService(conn)
+
 
     # -------------------------------------------------------------------------
     # 1. Job Shortlisting
@@ -647,3 +653,76 @@ class ApplicationPipelineService:
             evidence=evidence,
             retry_recommendation=retry_recommendation,
         )
+
+    # -------------------------------------------------------------------------
+    # 5. Phase 4 Application Intelligence & Package Generation
+    # -------------------------------------------------------------------------
+    def build_application_package(self, job_id: int) -> ApplicationPackage:
+        """
+        Construct a complete, human-gated ApplicationPackage for a job:
+        - Evaluates eligibility and work authorization
+        - Selects tailored truthful resume profile
+        - Generates fact-grounded cover letter draft
+        - Computes 6-factor deterministic priority score and timing recommendation
+        """
+        job = self.job_repo.get_normalized_job(job_id)
+        if not job:
+            raise ValueError(f"Job #{job_id} not found.")
+
+        # Compute match score
+        match_report = self.matcher.match_job(job)
+
+        # Compute freshness age
+        freshness_age = None
+        if job.published_at:
+            try:
+                pub_dt = datetime.fromisoformat(job.published_at)
+                now = datetime.now(UTC)
+                freshness_age = max(0.0, (now - pub_dt).total_seconds() / 3600.0)
+            except (ValueError, TypeError):
+                freshness_age = None
+
+        package = self.intelligence.create_application_package(
+            job=job,
+            match_score=match_report.match_score,
+            freshness_age_hours=freshness_age,
+        )
+
+        # Sync with application record status if existing
+        app = self.job_repo.get_application_by_job_id(job_id)
+        if app:
+            package.application_status = app.status
+            if app.applied_at:
+                package.submitted_at = app.applied_at
+            if app.notes:
+                package.notes = app.notes
+
+        return package
+
+    def get_application_queue(
+        self,
+        max_age_hours: float = 720.0,
+        min_priority_score: float = 50.0,
+    ) -> list[ApplicationPackage]:
+        """
+        Return the prioritized daily application queue sorted by Priority Score (descending)
+        and freshness.
+        """
+        fresh_jobs = self.job_repo.list_fresh_jobs(max_age_hours=max_age_hours, limit=100)
+        packages: list[ApplicationPackage] = []
+
+        for job in fresh_jobs:
+            if job.id is None:
+                continue
+            try:
+                pkg = self.build_application_package(job.id)
+                if pkg.priority_score >= min_priority_score:
+                    packages.append(pkg)
+            except (ValueError, TypeError, KeyError):
+                pass
+
+        # Sort: priority_score desc, then created_at desc
+        packages.sort(key=lambda p: (p.priority_score, p.created_at), reverse=True)
+        return packages
+
+

@@ -142,8 +142,35 @@ class CandidateLocations(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     india_priority: list[str] = Field(
-        default_factory=lambda: ["Bengaluru", "Hyderabad", "Chennai", "Pune", "Noida"],
+        default_factory=lambda: [
+            "Bengaluru",
+            "Hyderabad",
+            "Chennai",
+            "Pune",
+            "Noida",
+            "Gurugram",
+            "Ahmedabad",
+            "Mysuru",
+            "Kochi",
+            "Mumbai",
+        ],
         description="Prioritized Indian tech hubs for job discovery.",
+    )
+    india_tier1: list[str] = Field(
+        default_factory=lambda: ["Bengaluru", "Hyderabad", "Chennai"],
+        description="Top-priority Tier 1 domestic semiconductor hubs.",
+    )
+    india_tier2: list[str] = Field(
+        default_factory=lambda: [
+            "Pune",
+            "Noida",
+            "Gurugram",
+            "Ahmedabad",
+            "Mysuru",
+            "Kochi",
+            "Mumbai",
+        ],
+        description="Tier 2 domestic semiconductor development centers.",
     )
     overseas_enabled: bool = Field(
         default=True,
@@ -152,6 +179,26 @@ class CandidateLocations(BaseModel):
     overseas_require_sponsorship: bool = Field(
         default=True,
         description="Whether overseas applications require visa sponsorship.",
+    )
+    overseas_priority_countries: list[str] = Field(
+        default_factory=lambda: [
+            "USA",
+            "Canada",
+            "UK",
+            "Germany",
+            "Netherlands",
+            "Singapore",
+            "Taiwan",
+            "Japan",
+            "South Korea",
+            "Ireland",
+            "Australia",
+            "UAE",
+            "France",
+            "Sweden",
+            "Switzerland",
+        ],
+        description="Target international semiconductor markets.",
     )
 
 
@@ -179,6 +226,39 @@ class CandidateDetails(BaseModel):
         ...,
         min_length=1,
         description="List of target job titles (e.g. Design Verification Engineer).",
+    )
+    tier1_target_roles: list[str] = Field(
+        default_factory=lambda: [
+            "Design Verification Engineer",
+            "Functional Verification Engineer",
+            "ASIC Verification Engineer",
+            "SoC Verification Engineer",
+        ],
+        description="Primary Tier 1 target roles (highest scoring priority).",
+    )
+    tier2_target_roles: list[str] = Field(
+        default_factory=lambda: [
+            "RTL Design Engineer",
+            "Verification Intern",
+            "RTL Design Intern",
+            "VLSI Intern",
+        ],
+        description="Secondary Tier 2 target roles.",
+    )
+    tier3_target_roles: list[str] = Field(
+        default_factory=lambda: [
+            "Graduate Engineer Trainee",
+            "Semiconductor Graduate Engineer",
+        ],
+        description="Tier 3 entry-level / trainee roles.",
+    )
+    tier4_target_roles: list[str] = Field(
+        default_factory=lambda: [
+            "Hardware Engineer",
+            "Digital Design Engineer",
+            "FPGA Engineer",
+        ],
+        description="Tier 4 general semiconductor engineering roles.",
     )
     graduation_year: int = Field(
         ...,

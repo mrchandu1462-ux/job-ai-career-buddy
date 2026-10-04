@@ -226,38 +226,65 @@ class JobScoringEngine:
 
         tools_score = min(20.0, round(tool_score_accum, 1))
 
-        # Location Scoring
+        # Location Scoring with Tier 1 & Tier 2 support
         location_score = 0.0
-        loc_str = job.location or ""
-        india_hubs = self.profile.candidate.locations.india_priority
+        loc_str = (job.location or "").lower()
+        country_str = (job.country or "").lower()
 
-        if any(hub.lower() in loc_str.lower() for hub in india_hubs):
+        india_t1 = getattr(self.profile.candidate.locations, "india_tier1", ["Bengaluru", "Hyderabad", "Chennai"])
+        india_t2 = getattr(
+            self.profile.candidate.locations,
+            "india_tier2",
+            ["Pune", "Noida", "Gurugram", "Ahmedabad", "Mysuru", "Kochi", "Mumbai"],
+        )
+        overseas_pref = getattr(
+            self.profile.candidate.locations,
+            "overseas_priority_countries",
+            ["USA", "Canada", "UK", "Germany", "Netherlands", "Singapore", "Taiwan", "Japan", "South Korea", "Ireland", "Australia", "UAE", "France", "Sweden", "Switzerland"],
+        )
+
+        if any(hub.lower() in loc_str for hub in india_t1):
             location_score = 10.0
-            reasons.append(f"+ Priority Tech Hub: {job.location}")
-        elif (job.country or "").lower() == "india":
+            reasons.append(f"+ Priority Tier 1 Tech Hub: {job.location}")
+        elif any(hub.lower() in loc_str for hub in india_t2):
+            location_score = 8.5
+            reasons.append(f"+ Priority Tier 2 Tech Hub: {job.location}")
+        elif country_str == "india" or "india" in loc_str:
             location_score = 8.0
             reasons.append(f"+ India Location: {job.location or 'India'}")
+        elif any(c.lower() in country_str or c.lower() in loc_str for c in overseas_pref):
+            location_score = 7.0
+            reasons.append(f"+ Target Overseas Market: {job.country or job.location}")
         elif hard_filter.is_overseas:
-            location_score = 6.0
-            reasons.append(f"+ Overseas Opportunity ({job.country})")
+            location_score = 5.5
+            reasons.append(f"+ Overseas Opportunity: {job.country}")
         else:
             location_score = 5.0
 
-        # Role Fit Scoring
+        # Role Fit Scoring with Tier Hierarchy
         title_lower = job.title.lower()
-        if "verification" in title_lower or "dv" in title_lower:
+        if any(term in title_lower for term in ["asic verification", "soc verification", "functional verification", "design verification", "dv engineer"]):
             role_fit_score = 10.0
-            reasons.append("+ Direct Design Verification role fit")
-        elif "rtl" in title_lower or "asic" in title_lower or "soc" in title_lower:
+            reasons.append("+ Direct Tier 1 Design Verification role fit")
+        elif any(term in title_lower for term in ["verification intern", "dv intern", "rtl intern", "vlsi intern", "rtl design", "digital design"]):
+            role_fit_score = 8.5
+            reasons.append("+ Tier 2 RTL / Verification Internship role fit")
+        elif any(term in title_lower for term in ["graduate engineer trainee", "get", "trainee", "semiconductor graduate"]):
             role_fit_score = 8.0
-            reasons.append("+ Adjacent ASIC / RTL Design role fit")
-        elif "trainee" in title_lower or "intern" in title_lower:
-            role_fit_score = 8.0
-            reasons.append("+ Entry-level Trainee / Intern role fit")
+            reasons.append("+ Tier 3 Graduate / Trainee role fit")
+        elif "verification" in title_lower or "dv" in title_lower:
+            role_fit_score = 9.0
+            reasons.append("+ Verification role fit")
         else:
             role_fit_score = 5.0
 
-        total_legacy_score = min(100.0, round(skill_score + tools_score + location_score + role_fit_score, 1))
+        # Watchlist boost
+        watchlist_boost = 0.0
+        if job.is_watchlist:
+            watchlist_boost = 5.0
+            reasons.append(f"+ Watchlisted Company: {job.company}")
+
+        total_legacy_score = min(100.0, round(skill_score + tools_score + location_score + role_fit_score + watchlist_boost, 1))
 
         # ---------------------------------------------------------------------
         # 2. Enhanced 7-Dimension Explainable Score Breakdown

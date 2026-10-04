@@ -23,6 +23,19 @@ RELATED_VLSI_ROLE_KEYWORDS = [
 ]
 
 
+SENIOR_ROLE_PATTERN = r"\b(?:senior|sr\.?|staff|principal|lead|architect|director|manager|head\s+of|vp)\b"
+
+UNRELATED_ROLE_KEYWORDS = [
+    r"\b(?:full\s*stack|web\s*developer|react|angular|node\.js|front[\s-]end|ui[\s-]ux|backend\s*developer|java\s*developer|dotnet|\.net|devops|cloud\s*architect)\b",
+    r"\b(?:customer\s*(?:support|service|success)|content\s*moderat(?:or|ion)|bpo|telecaller|sales\s*executive|marketing\s*specialist|talent\s*acquisition|hr\s*recruiter)\b",
+    r"\b(?:manual\s*test(?:er|ing)|generic\s*qa|software\s*testing\s*manual|selenium\s*tester)\b",
+]
+
+VLSI_OVERRIDE_KEYWORDS = [
+    r"\b(?:systemverilog|uvm|sva|verilog|asic|soc|rtl|vlsi|semiconductor|fpga|digital\s*design|questa|vcs|xcelium)\b"
+]
+
+
 class HardFilterEngine:
     """Evaluates non-negotiable candidate constraints (graduation year, experience bounds, locations, roles)."""
 
@@ -35,6 +48,9 @@ class HardFilterEngine:
         failed: list[str] = []
 
         candidate_grad_year = self.profile.candidate.graduation_year
+        title_lower = job.title.lower()
+        desc_lower = (job.description or "").lower()
+        combined_text = f"{title_lower} {desc_lower}"
 
         # 1. Graduation Year Filter
         if job.graduation_year_min is not None and candidate_grad_year < job.graduation_year_min:
@@ -48,30 +64,42 @@ class HardFilterEngine:
         else:
             passed.append(f"Graduation year ({candidate_grad_year}) is eligible.")
 
-        # 2. Experience Bounds Filter
-        if job.experience_min is not None and job.experience_min > 2.0:
+        # 2. Seniority & Experience Bounds Filter
+        is_senior = bool(re.search(SENIOR_ROLE_PATTERN, title_lower)) and not any(
+            t in title_lower for t in ["trainee", "intern", "junior", "entry", "fresher", "get"]
+        )
+        if is_senior:
+            failed.append(
+                f"Senior / Staff / Principal / Lead / Architect role title '{job.title}' exceeding entry-level fresher bounds."
+            )
+        elif job.experience_min is not None and job.experience_min > 2.0:
             failed.append(
                 f"Requires {job.experience_min}+ years of experience, exceeding entry-level fresher threshold."
             )
+        elif re.search(r"\b(?:3\+|4\+|5\+|7\+|10\+)\s*(?:years?|yrs?)\b", desc_lower) and not re.search(r"\b(?:0-1|0-2|1-2|fresher|entry[\s-]level|2025)\b", desc_lower):
+            failed.append("Listing description explicitly mandates 3+ years experience, exceeding entry-level fresher threshold.")
         else:
             exp_text = f"{job.experience_min or 0.0}-{job.experience_max or 1.0} yrs"
             passed.append(f"Experience requirements ({exp_text}) are compatible with fresher profile.")
 
-        # 3. Role Compatibility Filter
-        title_lower = job.title.lower()
-        role_matched = any(re.search(pat, title_lower) for pat in RELATED_VLSI_ROLE_KEYWORDS)
+        # 3. Role Compatibility & Quality Filter
+        is_unrelated = any(re.search(pat, combined_text) for pat in UNRELATED_ROLE_KEYWORDS)
+        has_vlsi_keywords = any(re.search(pat, combined_text) for pat in VLSI_OVERRIDE_KEYWORDS)
 
-        # Also check against explicit profile target roles
-        if not role_matched:
-            for target_role in self.profile.candidate.target_roles:
-                if target_role.lower() in title_lower or title_lower in target_role.lower():
-                    role_matched = True
-                    break
-
-        if not role_matched:
-            failed.append(f"Role title '{job.title}' is not compatible with target VLSI/DV fresher profile.")
+        if is_unrelated and not has_vlsi_keywords:
+            failed.append(f"Role title '{job.title}' is classified as non-semiconductor / unrelated software or testing job.")
         else:
-            passed.append(f"Role title '{job.title}' matches target semiconductor verification profile.")
+            role_matched = any(re.search(pat, title_lower) for pat in RELATED_VLSI_ROLE_KEYWORDS)
+            if not role_matched:
+                for target_role in self.profile.candidate.target_roles:
+                    if target_role.lower() in title_lower or title_lower in target_role.lower():
+                        role_matched = True
+                        break
+
+            if not role_matched and not has_vlsi_keywords:
+                failed.append(f"Role title '{job.title}' is not compatible with target VLSI/DV fresher profile.")
+            else:
+                passed.append(f"Role title '{job.title}' matches target semiconductor verification profile.")
 
         # 4. Location & Overseas Sponsorship Filter
         is_overseas = False
@@ -86,7 +114,27 @@ class HardFilterEngine:
                 passed.append(f"Overseas listing ({job.country}) allowed by candidate preferences.")
                 if self.profile.candidate.work_authorization.requires_sponsorship_overseas:
                     requires_sponsorship = True
-                    passed.append("Flagged for explicit overseas visa sponsorship tracking.")
+
+                    # Check for explicit negative sponsorship signals
+                    has_no_sponsorship = (
+                        job.visa_sponsorship == "sponsorship_not_supported"
+                        or job.visa_status == "sponsorship_not_supported"
+                        or bool(
+                            re.search(
+                                r"\b(?:no\s*(?:visa\s*)?sponsorship|cannot\s*sponsor|not\s*able\s*to\s*sponsor|"
+                                r"unable\s*to\s*sponsor|sponsorship\s*(?:is\s*)?not\s*(?:available|provided|offered)|"
+                                r"must\s*already\s*have\s*(?:work\s*)?authorization|us\s*citizens?\s*or\s*green\s*card\s*only|"
+                                r"citizenship\s*required|without\s*(?:company\s*)?sponsorship)\b",
+                                combined_text,
+                            )
+                        )
+                    )
+                    if has_no_sponsorship:
+                        failed.append(
+                            f"Overseas position in {job.country} explicitly requires existing work authorization / does not sponsor visas."
+                        )
+                    else:
+                        passed.append("Flagged for overseas visa sponsorship tracking.")
         else:
             passed.append(f"Domestic India listing ({job.location or 'India'}).")
 

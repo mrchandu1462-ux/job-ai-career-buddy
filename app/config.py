@@ -49,6 +49,26 @@ class AppSettings(BaseSettings):
         "Noida",
     ]
 
+    # Email & Notification Settings
+    email_enabled: bool = False
+    email_provider: str = "console"  # "console", "smtp", "sendgrid", "resend"
+    email_from: str = "alerts@job-ai.local"
+    email_to: str = "candidate@vlsi-career.internal"
+    email_api_key: str | None = None
+    email_smtp_host: str | None = None
+    email_smtp_port: int = 587
+    email_username: str | None = None
+    email_password: str | None = None
+    email_use_tls: bool = True
+    email_use_ssl: bool = False
+    email_timeout_seconds: int = 30
+    email_max_retries: int = 3
+
+    # Digest Settings
+    digest_enabled: bool = True
+    digest_hour: int = 19  # 7 PM local/configured
+    dashboard_url: str = "http://localhost:8501"
+
 
 settings = AppSettings()
 
@@ -56,4 +76,5 @@ settings = AppSettings()
 def get_settings() -> AppSettings:
     """Return the global application settings instance."""
     return settings
+
 

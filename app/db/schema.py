@@ -35,6 +35,33 @@ CREATE TABLE IF NOT EXISTS normalized_jobs (
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL,
     fingerprint TEXT NOT NULL UNIQUE,
+    published_at TEXT,
+    posted_at TEXT,
+    discovered_at TEXT,
+    source_timestamp TEXT,
+    freshness_status TEXT DEFAULT 'unknown',
+    freshness_bucket TEXT DEFAULT 'UNKNOWN',
+    freshness_confidence TEXT DEFAULT 'LOW',
+    timestamp_source TEXT DEFAULT 'unverified',
+    freshness_age_hours REAL,
+    region TEXT DEFAULT 'india',
+    city TEXT,
+    workplace_type TEXT DEFAULT 'unknown',
+    remote_type TEXT DEFAULT 'unknown',
+    visa_sponsorship TEXT DEFAULT 'unknown',
+    visa_status TEXT DEFAULT 'unknown',
+    sponsorship_confidence TEXT DEFAULT 'LOW',
+    source_name TEXT,
+    source_type TEXT DEFAULT 'career_pages',
+    source_job_id TEXT,
+    canonical_url TEXT,
+    source_references TEXT,
+    first_notified_at TEXT,
+    last_notified_at TEXT,
+    notification_count INTEGER DEFAULT 0,
+    priority_score REAL DEFAULT 0.0,
+    priority_category TEXT DEFAULT 'LOW',
+    is_watchlist INTEGER DEFAULT 0,
     FOREIGN KEY (raw_job_id) REFERENCES raw_jobs (id) ON DELETE SET NULL
 );
 """
@@ -266,6 +293,25 @@ CREATE TABLE IF NOT EXISTS job_source_runs (
 );
 """
 
+# New table for scanner lock to enforce single active scan
+CREATE_SCANNER_LOCK_TABLE = """
+CREATE TABLE IF NOT EXISTS scanner_locks (
+    lock_name TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    lease_seconds INTEGER NOT NULL
+);
+"""
+
+# Phase 3: Scheduler daemon persistent state
+CREATE_MONITOR_STATE_TABLE = """
+CREATE TABLE IF NOT EXISTS monitor_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 CREATE_JOB_ALERTS_TABLE = """
 CREATE TABLE IF NOT EXISTS job_alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -282,7 +328,46 @@ CREATE TABLE IF NOT EXISTS job_alerts (
     status TEXT NOT NULL DEFAULT 'proposed',
     notification_proposal_id INTEGER,
     created_at TEXT NOT NULL,
+    priority_category TEXT DEFAULT 'LOW',
+    is_fresh_24h_match INTEGER DEFAULT 0,
+    first_notified_at TEXT,
+    last_notified_at TEXT,
+    notification_count INTEGER DEFAULT 0,
     FOREIGN KEY (job_id) REFERENCES normalized_jobs (id) ON DELETE CASCADE
+);
+"""
+
+CREATE_COMPANY_WATCHLIST_TABLE = """
+CREATE TABLE IF NOT EXISTS company_watchlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_name TEXT NOT NULL UNIQUE,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    priority_level TEXT NOT NULL DEFAULT 'HIGH',
+    notes TEXT,
+    created_at TEXT NOT NULL
+);
+"""
+
+# Phase 4 Final: Email notification deliveries tracking
+CREATE_EMAIL_DELIVERIES_TABLE = """
+CREATE TABLE IF NOT EXISTS email_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notification_id INTEGER,
+    job_id INTEGER,
+    application_id INTEGER,
+    recipient TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    delivery_status TEXT NOT NULL DEFAULT 'PROPOSED',
+    provider TEXT NOT NULL,
+    provider_message_id TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    queued_at TEXT,
+    sent_at TEXT,
+    failed_at TEXT,
+    last_error TEXT,
+    fingerprint TEXT
 );
 """
 
@@ -322,6 +407,11 @@ CREATE INDEX IF NOT EXISTS idx_job_source_runs_timestamp ON job_source_runs (run
 CREATE INDEX IF NOT EXISTS idx_job_alerts_job_id ON job_alerts (job_id);
 CREATE INDEX IF NOT EXISTS idx_job_alerts_priority ON job_alerts (priority);
 CREATE INDEX IF NOT EXISTS idx_job_alerts_status ON job_alerts (status);
+CREATE INDEX IF NOT EXISTS idx_company_watchlist_name ON company_watchlist (company_name);
+CREATE INDEX IF NOT EXISTS idx_email_deliveries_job_id ON email_deliveries (job_id);
+CREATE INDEX IF NOT EXISTS idx_email_deliveries_status ON email_deliveries (delivery_status);
+CREATE INDEX IF NOT EXISTS idx_email_deliveries_fingerprint ON email_deliveries (fingerprint);
+CREATE INDEX IF NOT EXISTS idx_email_deliveries_created_at ON email_deliveries (created_at);
 """
 
 
@@ -333,15 +423,54 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         if existing_cols:
             new_cols = {
                 "published_at": "TEXT",
+                "posted_at": "TEXT",
+                "discovered_at": "TEXT",
+                "source_timestamp": "TEXT",
                 "freshness_status": "TEXT DEFAULT 'unknown'",
+                "freshness_bucket": "TEXT DEFAULT 'UNKNOWN'",
+                "freshness_confidence": "TEXT DEFAULT 'LOW'",
+                "timestamp_source": "TEXT DEFAULT 'unverified'",
                 "freshness_age_hours": "REAL",
+                "region": "TEXT DEFAULT 'india'",
+                "city": "TEXT",
                 "workplace_type": "TEXT DEFAULT 'unknown'",
+                "remote_type": "TEXT DEFAULT 'unknown'",
                 "visa_sponsorship": "TEXT DEFAULT 'unknown'",
+                "visa_status": "TEXT DEFAULT 'unknown'",
+                "sponsorship_confidence": "TEXT DEFAULT 'LOW'",
+                "source_name": "TEXT",
+                "source_type": "TEXT DEFAULT 'career_pages'",
+                "source_job_id": "TEXT",
+                "canonical_url": "TEXT",
                 "source_references": "TEXT",
+                "first_notified_at": "TEXT",
+                "last_notified_at": "TEXT",
+                "notification_count": "INTEGER DEFAULT 0",
+                "priority_score": "REAL DEFAULT 0.0",
+                "priority_category": "TEXT DEFAULT 'LOW'",
+                "is_watchlist": "INTEGER DEFAULT 0",
             }
             for col_name, col_def in new_cols.items():
                 if col_name not in existing_cols:
                     conn.execute(f"ALTER TABLE normalized_jobs ADD COLUMN {col_name} {col_def};")
+
+        # Migrate job_alerts table if present
+        alert_cur = conn.execute("PRAGMA table_info(job_alerts);")
+        alert_cols = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in alert_cur.fetchall()}
+        if alert_cols:
+            new_alert_cols = {
+                "priority_category": "TEXT DEFAULT 'LOW'",
+                "is_fresh_24h_match": "INTEGER DEFAULT 0",
+                "first_notified_at": "TEXT",
+                "last_notified_at": "TEXT",
+                "notification_count": "INTEGER DEFAULT 0",
+            }
+            for col_name, col_def in new_alert_cols.items():
+                if col_name not in alert_cols:
+                    conn.execute(f"ALTER TABLE job_alerts ADD COLUMN {col_name} {col_def};")
+
+        # Ensure email_deliveries table exists
+        conn.execute(CREATE_EMAIL_DELIVERIES_TABLE)
     except sqlite3.Error:
         pass
 
@@ -366,11 +495,19 @@ def create_schema(conn: sqlite3.Connection) -> None:
         conn.execute(CREATE_TAILORED_RESUMES_TABLE)
         conn.execute(CREATE_PROPOSED_SCHEDULE_NOTIFICATIONS_TABLE)
         conn.execute(CREATE_JOB_SOURCE_RUNS_TABLE)
+        # Initialize scanner lock table
+        conn.execute(CREATE_SCANNER_LOCK_TABLE)
+        # Phase 3: scheduler daemon state
+        conn.execute(CREATE_MONITOR_STATE_TABLE)
         conn.execute(CREATE_JOB_ALERTS_TABLE)
+        conn.execute(CREATE_COMPANY_WATCHLIST_TABLE)
+        conn.execute(CREATE_EMAIL_DELIVERIES_TABLE)
         _migrate_schema(conn)
         conn.executescript(CREATE_INDEXES)
 
 
 create_tables = create_schema
+
+
 
 
