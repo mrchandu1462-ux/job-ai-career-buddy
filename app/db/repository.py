@@ -6,10 +6,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.db.models import (
+    AlertPriority,
     ApplicationEvent,
     ApplicationEventType,
     ApplicationRecord,
     ApplicationStatus,
+    FreshnessStatus,
+    JobAlertRecord,
+    JobSourceRunRecord,
     JobStatus,
     NormalizedJob,
     NotificationRecord,
@@ -93,6 +97,18 @@ class JobRepository:
         skills_raw = row["skills"]
         skills_list = json.loads(skills_raw) if skills_raw else []
 
+        keys = row.keys() if hasattr(row, "keys") else []
+        published_at = row["published_at"] if "published_at" in keys else None
+        freshness_status = row["freshness_status"] if "freshness_status" in keys else "unknown"
+        freshness_age_hours = row["freshness_age_hours"] if "freshness_age_hours" in keys else None
+        workplace_type = row["workplace_type"] if "workplace_type" in keys else "unknown"
+        visa_sponsorship = row["visa_sponsorship"] if "visa_sponsorship" in keys else "unknown"
+        source_refs = (
+            json.loads(row["source_references"])
+            if "source_references" in keys and row["source_references"]
+            else [row["source"]]
+        )
+
         return NormalizedJob(
             id=row["id"],
             raw_job_id=row["raw_job_id"],
@@ -114,6 +130,12 @@ class JobRepository:
             first_seen=row["first_seen"],
             last_seen=row["last_seen"],
             fingerprint=row["fingerprint"],
+            published_at=published_at,
+            freshness_status=freshness_status,
+            freshness_age_hours=freshness_age_hours,
+            workplace_type=workplace_type,
+            visa_sponsorship=visa_sponsorship,
+            source_references=source_refs,
         )
 
     def insert_normalized_job(self, job: NormalizedJob) -> int:
@@ -123,9 +145,10 @@ class JobRepository:
             raw_job_id, company, title, location, country, employment_type,
             experience_min, experience_max, graduation_year_min, graduation_year_max,
             description, requirements, skills, application_url, source, status,
-            first_seen, last_seen, fingerprint
+            first_seen, last_seen, fingerprint, published_at, freshness_status,
+            freshness_age_hours, workplace_type, visa_sponsorship, source_references
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try:
             cursor = self.conn.execute(
@@ -150,6 +173,12 @@ class JobRepository:
                     job.first_seen,
                     job.last_seen,
                     job.fingerprint,
+                    job.published_at,
+                    job.freshness_status,
+                    job.freshness_age_hours,
+                    job.workplace_type,
+                    job.visa_sponsorship,
+                    json.dumps(job.source_references or [job.source]),
                 ),
             )
             self.conn.commit()
@@ -683,3 +712,183 @@ class JobRepository:
         query = "UPDATE notifications SET is_read = 1 WHERE id = ?"
         self.conn.execute(query, (notification_id,))
         self.conn.commit()
+
+    # -------------------------------------------------------------------------
+    # Fresh Job Monitoring & Alerts (Phase 5)
+    # -------------------------------------------------------------------------
+    def record_source_run(self, record: JobSourceRunRecord) -> int:
+        """Record audit details for a job source monitoring run."""
+        query = """
+        INSERT INTO job_source_runs (
+            source_name, run_timestamp, status, jobs_discovered, jobs_accepted,
+            jobs_rejected, fresh_jobs_count, duration_ms, error_message
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        cursor = self.conn.execute(
+            query,
+            (
+                record.source_name,
+                record.run_timestamp,
+                record.status,
+                record.jobs_discovered,
+                record.jobs_accepted,
+                record.jobs_rejected,
+                record.fresh_jobs_count,
+                record.duration_ms,
+                record.error_message,
+            ),
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def list_source_runs(
+        self, source_name: str | None = None, limit: int = 20
+    ) -> list[JobSourceRunRecord]:
+        """List historical source execution runs."""
+        query = "SELECT * FROM job_source_runs WHERE 1=1"
+        params: list[Any] = []
+        if source_name:
+            query += " AND source_name = ?"
+            params.append(source_name)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = self.conn.execute(query, tuple(params))
+        records = []
+        for r in cursor.fetchall():
+            records.append(
+                JobSourceRunRecord(
+                    id=r["id"],
+                    source_name=r["source_name"],
+                    run_timestamp=r["run_timestamp"],
+                    status=r["status"],
+                    jobs_discovered=r["jobs_discovered"],
+                    jobs_accepted=r["jobs_accepted"],
+                    jobs_rejected=r["jobs_rejected"],
+                    fresh_jobs_count=r["fresh_jobs_count"],
+                    duration_ms=r["duration_ms"],
+                    error_message=r["error_message"],
+                )
+            )
+        return records
+
+
+    def create_job_alert(self, alert: JobAlertRecord) -> int:
+        """Persist a newly discovered opportunity alert."""
+        query = """
+        INSERT INTO job_alerts (
+            job_id, company, title, location, country, published_at,
+            freshness_status, freshness_age_hours, match_score, priority,
+            status, notification_proposal_id, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        cursor = self.conn.execute(
+            query,
+            (
+                alert.job_id,
+                alert.company,
+                alert.title,
+                alert.location,
+                alert.country,
+                alert.published_at,
+                alert.freshness_status.value if isinstance(alert.freshness_status, FreshnessStatus) else str(alert.freshness_status),
+                alert.freshness_age_hours,
+                alert.match_score,
+                alert.priority.value if isinstance(alert.priority, AlertPriority) else str(alert.priority),
+                alert.status,
+                alert.notification_proposal_id,
+                alert.created_at,
+            ),
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def list_job_alerts(
+        self,
+        priority: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[JobAlertRecord]:
+        """Fetch stored opportunity alerts with optional priority filter."""
+        query = "SELECT * FROM job_alerts WHERE 1=1"
+        params: list[Any] = []
+        if priority and priority != "ALL":
+            query += " AND priority = ?"
+            params.append(priority)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = self.conn.execute(query, tuple(params))
+        alerts = []
+        for r in cursor.fetchall():
+            alerts.append(
+                JobAlertRecord(
+                    id=r["id"],
+                    job_id=r["job_id"],
+                    company=r["company"],
+                    title=r["title"],
+                    location=r["location"],
+                    country=r["country"],
+                    published_at=r["published_at"],
+                    freshness_status=FreshnessStatus(r["freshness_status"]) if r["freshness_status"] in [s.value for s in FreshnessStatus] else FreshnessStatus.UNKNOWN,
+                    freshness_age_hours=r["freshness_age_hours"],
+                    match_score=r["match_score"],
+                    priority=AlertPriority(r["priority"]) if r["priority"] in [p.value for p in AlertPriority] else AlertPriority.UNKNOWN,
+                    status=r["status"],
+                    notification_proposal_id=r["notification_proposal_id"],
+                    created_at=r["created_at"],
+                )
+            )
+        return alerts
+
+    def get_job_alert_by_job_id(self, job_id: int) -> JobAlertRecord | None:
+        """Fetch alert record for a specific job_id if already generated."""
+        query = "SELECT * FROM job_alerts WHERE job_id = ? ORDER BY id DESC LIMIT 1"
+        cursor = self.conn.execute(query, (job_id,))
+        r = cursor.fetchone()
+        if not r:
+            return None
+        return JobAlertRecord(
+            id=r["id"],
+            job_id=r["job_id"],
+            company=r["company"],
+            title=r["title"],
+            location=r["location"],
+            country=r["country"],
+            published_at=r["published_at"],
+            freshness_status=FreshnessStatus(r["freshness_status"]) if r["freshness_status"] in [s.value for s in FreshnessStatus] else FreshnessStatus.UNKNOWN,
+            freshness_age_hours=r["freshness_age_hours"],
+            match_score=r["match_score"],
+            priority=AlertPriority(r["priority"]) if r["priority"] in [p.value for p in AlertPriority] else AlertPriority.UNKNOWN,
+            status=r["status"],
+            notification_proposal_id=r["notification_proposal_id"],
+            created_at=r["created_at"],
+        )
+
+    def list_fresh_jobs(
+        self,
+        max_age_hours: float = 24.0,
+        region: str | None = None,
+        limit: int = 50,
+    ) -> list[NormalizedJob]:
+        """Fetch normalized jobs published within the specified maximum age."""
+        query = "SELECT * FROM normalized_jobs WHERE status = 'active'"
+        params: list[Any] = []
+        if max_age_hours is not None:
+            query += " AND (freshness_age_hours IS NOT NULL AND freshness_age_hours <= ?)"
+            params.append(max_age_hours)
+        if region and region.lower() == "india":
+            query += " AND (country = 'India' OR location LIKE '%India%' OR location LIKE '%Bengaluru%' OR location LIKE '%Hyderabad%')"
+        elif region and region.lower() == "overseas":
+            query += " AND (country != 'India' AND country IS NOT NULL)"
+        query += " ORDER BY first_seen DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = self.conn.execute(query, tuple(params))
+        return [self._row_to_normalized_job(row) for row in cursor.fetchall()]
+

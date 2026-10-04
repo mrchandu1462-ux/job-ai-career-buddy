@@ -51,6 +51,92 @@ class JobStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class FreshnessStatus(str, Enum):
+    """Categorized publication freshness status."""
+
+    FRESH_0_6_HOURS = "fresh_0_6_hours"
+    FRESH_6_24_HOURS = "fresh_6_24_hours"
+    RECENT_1_3_DAYS = "recent_1_3_days"
+    OLDER = "older"
+    UNKNOWN = "unknown"
+
+
+class AlertPriority(str, Enum):
+    """Priority level for human review notification proposals."""
+
+    P0 = "P0"  # Published <24h with strong candidate match (>=75/80)
+    P1 = "P1"  # Published <24h with reasonable candidate match (>=60)
+    P2 = "P2"  # Published 1-3 days with strong match (>=80)
+    P3 = "P3"  # Older or research opportunity
+    UNKNOWN = "UNKNOWN"  # Unverified freshness or low match
+
+
+class WorkplaceType(str, Enum):
+    """Workplace arrangement setup."""
+
+    ONSITE = "onsite"
+    HYBRID = "hybrid"
+    REMOTE = "remote"
+    UNKNOWN = "unknown"
+
+
+class VisaSponsorshipStatus(str, Enum):
+    """Explicitly verified visa sponsorship availability."""
+
+    AVAILABLE = "available"
+    NOT_AVAILABLE = "not_available"
+    CITIZEN_OR_PR_ONLY = "citizen_or_pr_only"
+    UNKNOWN = "unknown"
+
+
+class SourceHealthStatus(str, Enum):
+    """Operational health status of an external job source adapter."""
+
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+    UNKNOWN = "unknown"
+
+
+class JobSourceRunRecord(BaseModel):
+    """Audit record for a single execution run of a job source adapter."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: int | None = None
+    source_name: str = Field(..., min_length=1, description="Identifier of the source adapter.")
+    run_timestamp: str = Field(..., description="ISO-8601 UTC timestamp of execution.")
+    status: str = Field(..., description="'success', 'partial', 'failed'")
+    jobs_discovered: int = Field(default=0, ge=0, description="Total raw jobs returned by adapter.")
+    jobs_accepted: int = Field(default=0, ge=0, description="Valid normalized jobs accepted.")
+    jobs_rejected: int = Field(default=0, ge=0, description="Invalid/malformed jobs rejected.")
+    fresh_jobs_count: int = Field(default=0, ge=0, description="Jobs published within last 24 hours.")
+    duration_ms: float = Field(default=0.0, ge=0.0, description="Execution duration in milliseconds.")
+    error_message: str | None = Field(default=None, description="Error or failure message if degraded/failed.")
+
+
+class JobAlertRecord(BaseModel):
+    """Stored opportunity alert surfaced for human review."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: int | None = None
+    job_id: int = Field(..., description="ID of normalized_jobs record.")
+    company: str
+    title: str
+    location: str | None = None
+    country: str | None = "India"
+    published_at: str | None = None
+    freshness_status: FreshnessStatus = FreshnessStatus.UNKNOWN
+    freshness_age_hours: float | None = None
+    match_score: float = Field(..., ge=0.0, le=100.0)
+    priority: AlertPriority = AlertPriority.UNKNOWN
+    status: str = Field(default="proposed", description="'proposed', 'approved', 'dismissed'")
+    notification_proposal_id: int | None = Field(default=None, description="Linked proposed_schedule_notifications id.")
+    created_at: str
+
+
+
 class RawJob(BaseModel):
     """Original untouched job listing payload directly from source."""
 
@@ -97,6 +183,25 @@ class NormalizedJob(BaseModel):
     fingerprint: str = Field(
         ..., min_length=1, description="Deterministic deduplication fingerprint."
     )
+    published_at: str | None = Field(
+        default=None, description="ISO-8601 publication timestamp if verified by source."
+    )
+    freshness_status: str | None = Field(
+        default="unknown", description="Freshness category (fresh_0_6_hours, fresh_6_24_hours, recent_1_3_days, older, unknown)."
+    )
+    freshness_age_hours: float | None = Field(
+        default=None, ge=0.0, description="Calculated age in hours at discovery."
+    )
+    workplace_type: str | None = Field(
+        default="unknown", description="Workplace arrangement: onsite, hybrid, remote, unknown."
+    )
+    visa_sponsorship: str | None = Field(
+        default="unknown", description="Visa sponsorship status if explicitly stated."
+    )
+    source_references: list[str] = Field(
+        default_factory=list, description="All sources that reported this job posting."
+    )
+
 
 
 class ApplicationRecord(BaseModel):

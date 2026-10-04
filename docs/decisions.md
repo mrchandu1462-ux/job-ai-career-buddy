@@ -182,6 +182,33 @@
      - Zero business logic or raw SQL queries in UI components; all interactions invoke `ApplicationPipelineService`, `JobDiscoveryPipeline`, `HistoricalInterviewPipeline`, `QuestionBankService`, `LearningModeService`, `InterviewSimulationEngine`, `CareerAnalyticsService`, `DOCXResumeExporter`, `PDFResumeExporter`, and `ResumeExportValidator`.
 - **Consequences**: Provides an intuitive, interactive, reliable personal AI Career Buddy adhering to non-negotiable safety rules and candidate factual integrity.
 
+## ADR-0018: Fresh Job Monitoring & Alert Engine (Phase 5)
+- **Status**: Accepted
+- **Context**: The Career Operating System requires proactive discovery and continuous monitoring of freshly released semiconductor / VLSI opportunities ($\le 24$ hours) across India priority hubs and Overseas markets, ranking them using the authoritative 7D candidate matching engine, deduplicating cross-source listings, and proposing human-gated notifications without fabricating posting timestamps or auto-submitting applications.
+- **Decision**:
+  1. `Deterministic 24-Hour Freshness Engine` (`app/jobs/freshness.py`):
+     - Calculates publication freshness age in hours and assigns deterministic tiers: `FRESH_0_6_HOURS`, `FRESH_6_24_HOURS`, `RECENT_1_3_DAYS`, `OLDER`, and `UNKNOWN`.
+     - Zero timestamp fabrication: unverified or relative phrases without numeric evidence evaluate strictly to `UNKNOWN` (`freshness_age_hours = None`, `confidence = 0.0`).
+     - Extracts workplace arrangement (`REMOTE`, `HYBRID`, `ONSITE`, `UNKNOWN`) and visa sponsorship availability (`AVAILABLE`, `NOT_AVAILABLE`, `CITIZEN_OR_PR_ONLY`, `UNKNOWN`) strictly grounded in JD text.
+  2. `Modular Source-Adapter Architecture` (`app/jobs/sources/adapters.py`):
+     - `JobSourceAdapter` abstract base class defining `fetch_jobs()`, `adapter_name`, `source_category`, `supports_region()`, `supports_freshness()`, and `health_status()`.
+     - Implementations include `SemiconductorCareerPageAdapter`, `FeedJobSourceAdapter`, and `MockJobSourceAdapter`.
+     - Complete failure isolation: adapter timeouts or remote HTTP/network errors are caught, logged, and audited in `job_source_runs` without interrupting other sources.
+  3. `Cross-Source Deduplication & Alert Engine` (`app/jobs/monitoring_service.py`):
+     - Canonical job fingerprinting merges multi-source postings into single records while accumulating all source references.
+     - Reuses existing 7D scoring engine (`JobScoringEngine`) and role classifier (`RoleClassifier`) to evaluate candidate fit and assign priority levels:
+       - **P0**: Published $< 24$h with strong candidate match ($\ge 75\%$).
+       - **P1**: Published $< 24$h with reasonable candidate match ($\ge 60\%$).
+       - **P2**: Published 1–3 days with strong match ($\ge 78\%$).
+       - **P3**: Older or research opportunities.
+     - Alert deduplication: checks `job_alerts` before creating notification proposals to prevent alert spam.
+     - Creates human-reviewable proposals in `PROPOSED` status (`ScheduleNotificationService`), preserving the strict rule: zero autonomous application submissions or external dispatches.
+  4. `CLI and Dashboard Integration` (`app/jobs/monitor.py`, `app/dashboard.py`):
+     - CLI entrypoint supporting `--region (all|india|overseas)`, `--fresh-only`, `--dry-run`, and `--limit`.
+     - Dedicated `🔥 2. Fresh Jobs` dashboard with live freshness counters, last run audit metrics, on-demand execution trigger, multi-filters, and action buttons.
+- **Consequences**: Enables continuous, automated, auditable, and fact-grounded fresh opportunity monitoring across domestic and global semiconductor markets under 100% candidate control.
+
+
 
 
 

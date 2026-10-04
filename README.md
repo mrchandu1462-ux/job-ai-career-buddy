@@ -79,19 +79,53 @@ Job-AI Career Buddy guides semiconductor freshers and engineers through the comp
 ## Implemented Features
 
 1. **Dashboard Overview**: Unified command center with live status metrics, pending human approvals, readiness score banner, and priority India tech hub listings.
-2. **Job Discovery & Matching**: Multi-source ingestion (manual JD paste, career portals), semiconductor classification, deduplication, hard eligibility filters, and 7-dimensional scoring.
-3. **Application Tracking & Human Gates**: Status lifecycle tracking (`discovered` $\rightarrow$ `shortlisted` $\rightarrow$ `preparing` $\rightarrow$ `ready_for_review` $\rightarrow$ `approved` $\rightarrow$ `applied` / `failed` / `rejected`) with immutable chronological audit logging.
-4. **Fact-Grounded ATS Resumes**: Single-column ATS-safe formatting, ATS score breakdown, adjacent evidence mapping, and export validation for DOCX and PDF formats.
-5. **Interview Preparation & Learning**:
+2. **Fresh Job Monitoring & Alert Engine (Phase 5)**:
+   - **24-Hour Deterministic Freshness**: Calculates publication age in hours and groups opportunities into `<6h (Ultra-Fresh)`, `6-24h (Fresh)`, `1-3 Days (Recent)`, `Older`, and `Unknown`. Zero timestamp fabrication.
+   - **India + Overseas Geographic Coverage**: Priority semiconductor tech hubs in India (Bengaluru, Hyderabad, Chennai, Pune, Noida, etc.) and global markets (US, UK, Germany, Netherlands, Singapore, Canada, etc.).
+   - **Modular Source Adapters**: Pluggable adapter architecture (`SemiconductorCareerPageAdapter`, `FeedJobSourceAdapter`, `MockJobSourceAdapter`) with per-source failure isolation and health audits in `job_source_runs`.
+   - **Cross-Source Deduplication**: Deterministic fingerprinting combines multi-source listings into a single canonical record while preserving all source references.
+   - **7D Matching & Alert Prioritization**: Leverages candidate Fact Bank and 7D scoring engine to assign **P0** (fresh $<24$h + strong match), **P1** (fresh $<24$h + reasonable match), **P2** (recent 1–3d + strong match), and **P3** alerts.
+   - **Alert Deduplication & Human Gating**: Automatically generates proposed email notifications in `PROPOSED` state without alert spam. Strictly zero autonomous application submissions or external communications.
+3. **Job Discovery & Matching**: Multi-source ingestion (manual JD paste, career portals), semiconductor classification, deduplication, hard eligibility filters, and 7-dimensional scoring.
+4. **Application Tracking & Human Gates**: Status lifecycle tracking (`discovered` $\rightarrow$ `shortlisted` $\rightarrow$ `preparing` $\rightarrow$ `ready_for_review` $\rightarrow$ `approved` $\rightarrow$ `applied` / `failed` / `rejected`) with immutable chronological audit logging.
+5. **Fact-Grounded ATS Resumes**: Single-column ATS-safe formatting, ATS score breakdown, adjacent evidence mapping, and export validation for DOCX and PDF formats.
+6. **Interview Preparation & Learning**:
    - **Pre-Interview Review Pack**: 8 categorized pools (Must Know, Frequently Asked, Previously Missed, Job-Specific, Company-Specific, Weak Areas, Fundamentals, Advanced).
    - **Structured Learning Mode**: 10-step curriculum with topic breakdown and interactive drills.
    - **Turn-by-Turn Simulator**: Multi-stage interview simulation covering HR, Digital Design, SystemVerilog, UVM, Protocols, Project Deep-Dive, and Debugging.
    - **Real Interview Debrief**: Outcome logging and automatic knowledge loop refinement.
-6. **Question Bank**: Full provenance search and batch YAML dataset ingestion.
-7. **Final Assessment & Readiness**: Timed mock tests (hidden answers during exam), score breakdown, remediation drill generation, and readiness gates.
-8. **Schedule & Notifications**: Adaptive prep milestone generation and human-gated email/calendar proposals (`PROPOSED` state).
-9. **Career Analytics**: Transparent database-backed conversion metrics, score distributions, and topic analytics.
-10. **Candidate Profile & Fact Bank**: Ground truth verified fact viewer and system status monitor.
+7. **Question Bank**: Full provenance search and batch YAML dataset ingestion.
+8. **Final Assessment & Readiness**: Timed mock tests (hidden answers during exam), score breakdown, remediation drill generation, and readiness gates.
+9. **Schedule & Notifications**: Adaptive prep milestone generation and human-gated email/calendar proposals (`PROPOSED` state).
+10. **Career Analytics**: Transparent database-backed conversion metrics, score distributions, and topic analytics.
+11. **Candidate Profile & Fact Bank**: Ground truth verified fact viewer and system status monitor.
+
+---
+
+## CLI & Automation Usage
+
+### Fresh Job Monitoring CLI
+The monitoring engine can be executed directly from the terminal or scheduled via cron/Task Scheduler:
+
+```powershell
+# Run monitoring across all configured sources and regions
+python -m app.jobs.monitor
+
+# Target domestic India tech hubs only
+python -m app.jobs.monitor --region india
+
+# Target international overseas markets
+python -m app.jobs.monitor --region overseas
+
+# Filter strictly for jobs published within the last 24 hours
+python -m app.jobs.monitor --fresh-only
+
+# Dry-run mode: fetch, normalize, score, and rank without database writes or notifications
+python -m app.jobs.monitor --dry-run
+
+# Limit candidate jobs evaluated per adapter
+python -m app.jobs.monitor --limit 20
+```
 
 ---
 
@@ -136,17 +170,21 @@ job-ai/
 ├── app/
 │   ├── application/        # Application lifecycle & preparation service
 │   ├── career/             # Knowledge base, simulation, learning engine, question bank, notifications, analytics
-│   ├── db/                 # SQLite connection, models, DAO repositories, schema DDL
-│   ├── jobs/               # Discovery, sources, classification, deduplication, matching
+│   ├── db/                 # SQLite connection, models, DAO repositories, schema DDL & migrations
+│   ├── jobs/               # Discovery, freshness, monitoring service, CLI, adapters, sources, normalizer
+│   │   ├── sources/        # Base adapters, career page adapter, RSS feeds, mock test adapter
+│   │   ├── freshness.py    # Deterministic freshness, priority, geography, and attribute extraction
+│   │   ├── monitoring_service.py # Fresh job monitor service, deduplication, alert proposals
+│   │   └── monitor.py      # CLI entrypoint for automation and scheduled monitoring
 │   ├── matching/           # Hard filters, relevance scorer, candidate ranker
 │   ├── profile/            # Pydantic profile & verified fact bank models
 │   ├── resume/             # Tailoring engine, ATS scorer, DOCX/PDF exporters & validators
 │   ├── config.py           # AppSettings configuration
-│   └── dashboard.py        # Streamlit 12-section web interface
+│   └── dashboard.py        # Streamlit 12-section web interface (including Fresh Jobs tab)
 ├── data/                   # Local SQLite database (git-ignored)
-├── docs/                   # Architecture Decision Records (ADRs 0001–0017)
+├── docs/                   # Architecture Decision Records (ADRs 0001–0018)
 ├── profile/                # Candidate profile, fact bank YAML, historical interviews YAML
-├── tests/                  # Pytest test suite (101 unit & integration tests)
+├── tests/                  # Pytest test suite (125 unit & integration tests)
 ├── pyproject.toml          # Project configuration & dependencies
 ├── requirements.txt        # Reproducible dependency manifest
 └── README.md               # Project documentation
@@ -156,6 +194,7 @@ job-ai/
 
 ## Testing Baseline
 
-- **Unit & Integration Tests**: 101/101 passing (`pytest -v`)
+- **Unit & Integration Tests**: 125/125 passing (`pytest -v`)
 - **Code Quality**: 100% clean (`ruff check .` with 0 errors / 0 warnings)
 - **Database Safety**: Idempotent schema initialization on connect with SQLite WAL mode and foreign keys enabled.
+

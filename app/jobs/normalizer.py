@@ -4,6 +4,12 @@ import re
 from datetime import UTC, datetime
 
 from app.db.models import JobStatus, NormalizedJob
+from app.jobs.freshness import (
+    calculate_job_freshness,
+    extract_visa_sponsorship,
+    extract_workplace_type,
+)
+from app.jobs.models import FreshnessStatus
 
 # Standard VLSI/Semiconductor skill dictionary
 VLSI_SKILL_KEYWORDS = [
@@ -118,6 +124,9 @@ def detect_seniority_flag(title: str, exp_min: float | None = None) -> bool:
     )
 
 
+
+
+
 def normalize_job_listing(
     company: str,
     title: str,
@@ -128,6 +137,10 @@ def normalize_job_listing(
     source: str = "manual",
     application_url: str | None = None,
     raw_job_id: int | None = None,
+    published_at: str | None = None,
+    workplace_type: str | None = None,
+    visa_sponsorship: str | None = None,
+    source_references: list[str] | None = None,
 ) -> NormalizedJob:
     """Convert raw job details into a fully validated NormalizedJob record."""
     now_iso = datetime.now(UTC).isoformat()
@@ -147,6 +160,13 @@ def normalize_job_listing(
             employment_type = "Trainee"
 
     fingerprint = generate_job_fingerprint(company=company, title=title, location=location)
+
+    # Freshness calculation
+    freshness_status, age_hours, _ = calculate_job_freshness(published_at)
+
+    # Workplace & visa extraction
+    workplace = workplace_type or extract_workplace_type(raw_text)
+    visa = visa_sponsorship or extract_visa_sponsorship(raw_text)
 
     return NormalizedJob(
         raw_job_id=raw_job_id,
@@ -168,4 +188,11 @@ def normalize_job_listing(
         first_seen=now_iso,
         last_seen=now_iso,
         fingerprint=fingerprint,
+        published_at=published_at,
+        freshness_status=freshness_status.value if isinstance(freshness_status, FreshnessStatus) else str(freshness_status),
+        freshness_age_hours=age_hours,
+        workplace_type=workplace,
+        visa_sponsorship=visa,
+        source_references=source_references or [source],
     )
+

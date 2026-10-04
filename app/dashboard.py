@@ -32,6 +32,8 @@ from app.db.models import (
     NotificationType,
 )
 from app.db.repository import JobRepository
+from app.jobs.models import FreshnessStatus
+from app.jobs.monitoring_service import FreshJobMonitoringService
 from app.jobs.pipeline import JobDiscoveryPipeline
 from app.jobs.sources.base import JobDiscoveryQuery
 from app.profile.loader import load_fact_bank, load_profile
@@ -64,6 +66,12 @@ def get_system_context():
         conn=conn, profile=profile, fact_bank=facts, artifacts_dir="artifacts/resumes"
     )
     discovery_pipeline = JobDiscoveryPipeline(conn=conn, profile=profile, fact_bank=facts)
+    monitor_service = FreshJobMonitoringService(
+        conn=conn,
+        profile=profile,
+        fact_bank=facts,
+        job_repo=job_repo,
+    )
     career_pipeline = HistoricalInterviewPipeline(conn)
     bank_service = QuestionBankService(conn, career_repo)
     learning_service = LearningModeService(career_repo)
@@ -83,6 +91,7 @@ def get_system_context():
         "resume_repo": resume_repo,
         "app_service": app_service,
         "discovery_pipeline": discovery_pipeline,
+        "monitor_service": monitor_service,
         "career_pipeline": career_pipeline,
         "bank_service": bank_service,
         "learning_service": learning_service,
@@ -104,6 +113,7 @@ def main():
     resume_repo: ResumeRepository = ctx["resume_repo"]
     app_service: ApplicationPipelineService = ctx["app_service"]
     discovery_pipeline: JobDiscoveryPipeline = ctx["discovery_pipeline"]
+    monitor_service: FreshJobMonitoringService = ctx["monitor_service"]
     career_pipeline: HistoricalInterviewPipeline = ctx["career_pipeline"]
     bank_service: QuestionBankService = ctx["bank_service"]
     learning_service: LearningModeService = ctx["learning_service"]
@@ -128,7 +138,7 @@ def main():
         "Navigation",
         [
             "📊 1. Dashboard",
-            "🔍 2. Jobs",
+            "🔥 2. Fresh Jobs",
             "📝 3. Applications",
             "📄 4. Resumes",
             "🧠 5. Interview Preparation",
@@ -149,6 +159,7 @@ def main():
         st.header("📊 Career Operating System — Personal AI Career Buddy")
 
         summary = analytics_service.get_summary_metrics()
+        monitor_summary = monitor_service.get_last_monitoring_run_summary()
         all_jobs = job_repo.list_normalized_jobs()
         all_apps = job_repo.list_applications()
         weaks = career_repo.list_weak_areas(resolved=False)
@@ -157,8 +168,8 @@ def main():
         # Top Metrics Grid
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Jobs Found", summary.get("total_discovered_jobs", 0))
-        c2.metric("Shortlisted", summary.get("status_counts", {}).get(ApplicationStatus.SHORTLISTED.value, 0))
-        c3.metric("Prepared", summary.get("status_counts", {}).get(ApplicationStatus.PREPARING.value, 0) + summary.get("status_counts", {}).get(ApplicationStatus.READY_FOR_REVIEW.value, 0))
+        c2.metric("Fresh (<24h)", monitor_summary.get("fresh_jobs_count", 0))
+        c3.metric("P0/P1 Alerts", monitor_summary.get("p0_opportunities", 0) + monitor_summary.get("p1_opportunities", 0))
         c4.metric("Applied", summary.get("applications_applied", 0))
         c5.metric("Unresolved Weaks", summary.get("unresolved_weak_areas_count", 0))
 
@@ -212,14 +223,70 @@ def main():
         if disc_summary.get("top_india_opportunities"):
             st.dataframe(disc_summary["top_india_opportunities"], use_container_width=True)
         else:
-            st.info("No India opportunities currently displayed. Explore the Jobs section.")
+            st.info("No India opportunities currently displayed. Explore the Fresh Jobs section.")
 
     # -------------------------------------------------------------------------
-    # 2. JOBS
+    # 2. FRESH JOBS & DISCOVERY
     # -------------------------------------------------------------------------
-    elif nav == "🔍 2. Jobs":
-        st.header("🔍 Job Discovery & Multi-Dimensional Match Engine")
+    elif "2. Fresh Jobs" in nav or "2. Jobs" in nav:
+        st.header("🔥 Fresh Job Monitoring & Alert Engine (India + Overseas)")
 
+        # Last Monitoring Run Summary Bar
+        run_summary = monitor_service.get_last_monitoring_run_summary()
+        all_jobs = job_repo.list_normalized_jobs()
+
+        # Count Freshness Categories
+        count_0_6h = sum(1 for j in all_jobs if getattr(j, "freshness_status", None) == FreshnessStatus.FRESH_0_6_HOURS)
+        count_6_24h = sum(1 for j in all_jobs if getattr(j, "freshness_status", None) == FreshnessStatus.FRESH_6_24_HOURS)
+        count_india = sum(1 for j in all_jobs if (getattr(j, "country", None) or "India").lower() == "india")
+        count_overseas = len(all_jobs) - count_india
+        count_p0 = run_summary.get("p0_opportunities", 0)
+        count_p1 = run_summary.get("p1_opportunities", 0)
+
+        # KPI Metrics Row
+        kpi1, kpi2, kpi3, kpi4, kpi5, kpi6 = st.columns(6)
+        kpi1.metric("⚡ Fresh <6h", count_0_6h)
+        kpi2.metric("🕒 Fresh 6-24h", count_6_24h)
+        kpi3.metric("🇮🇳 India Hubs", count_india)
+        kpi4.metric("🌐 Overseas", count_overseas)
+        kpi5.metric("🔥 P0 Alerts", count_p0)
+        kpi6.metric("✨ P1 Alerts", count_p1)
+
+        st.divider()
+
+        # Monitoring Execution Controls & Trigger
+        with st.expander("⚡ Run Fresh Job Monitor On-Demand", expanded=False):
+            col_m1, col_m2, col_m3, col_m4 = st.columns([2, 1, 1, 2])
+            with col_m1:
+                sel_region = st.selectbox("Target Region", ["all", "india", "overseas"], index=0)
+            with col_m2:
+                sel_fresh_only = st.checkbox("Fresh <=24h Only", value=False)
+            with col_m3:
+                sel_dry_run = st.checkbox("Dry Run (No Save)", value=False)
+            with col_m4:
+                st.write("")
+                if st.button("🚀 Run Monitoring Cycle Now", type="primary"):
+                    with st.spinner("Executing fresh job monitoring cycle across adapters..."):
+                        cycle_report = monitor_service.run_monitoring_cycle(
+                            region=sel_region,
+                            fresh_only=sel_fresh_only,
+                            dry_run=sel_dry_run,
+                            limit=20,
+                        )
+                        st.success(
+                            f"Cycle complete! Checked {cycle_report.sources_checked} sources, found {cycle_report.total_jobs_found} raw jobs, "
+                            f"{cycle_report.unique_jobs_ingested} unique canonical, {cycle_report.fresh_24h_jobs_count} fresh (<24h), "
+                            f"and proposed {cycle_report.notifications_generated} human-gated alerts."
+                        )
+                        st.rerun()
+
+            st.caption(
+                f"**Last Run:** `{run_summary.get('last_run_timestamp')}` | "
+                f"**Sources Monitored:** {run_summary.get('sources_monitored')} | "
+                f"**Source Failures:** {run_summary.get('source_failures')} (Isolated safely)"
+            )
+
+        # Ingest Manual Listing Expander
         with (
             st.expander("➕ Ingest a New Job Listing (Manual or Paste JD)", expanded=False),
             st.form("job_ingestion_form"),
@@ -248,32 +315,93 @@ def main():
                 st.success(f"Job ingested! Assigned ID: {report[0].normalized_job_id if report else 'Done'}")
                 st.rerun()
 
-        all_jobs = job_repo.list_normalized_jobs()
+        # Multi-Filters
+        st.subheader("🎯 Filter & Browse Opportunities")
+        f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+        with f_col1:
+            filter_geo = st.selectbox("Geography", ["All", "India", "Overseas"], index=0)
+        with f_col2:
+            filter_fresh = st.selectbox("Freshness", ["All", "<6h (Ultra-Fresh)", "<24h (Fresh)", "1-3 Days", "Older", "Unknown"], index=0)
+        with f_col3:
+            filter_match = st.selectbox("7D Match Score", ["All", "80%+ (Strong Match)", "70%+", "60%+"], index=0)
+        with f_col4:
+            filter_role = st.selectbox("Role Focus", ["All", "Design Verification", "RTL Design", "Validation"], index=0)
+
         if not all_jobs:
-            st.info("No job listings found in database. Ingest a job above.")
+            st.info("No job listings found in database. Run a monitoring cycle above or ingest a job.")
         else:
             ranked_matches = discovery_pipeline.evaluate_and_rank_all_jobs(eligible_only=False)
-            job_choices = {
-                f"{r.company} — {r.title} ({r.location or 'Remote'}) [Match: {int(r.match_score)}/100]": r.job_id
-                for r in ranked_matches
-            }
-            selected_choice = st.selectbox("Select Job to Inspect:", list(job_choices.keys()))
-            selected_job_id = job_choices[selected_choice]
 
-            selected_match = next(r for r in ranked_matches if r.job_id == selected_job_id)
-            norm_job = job_repo.get_normalized_job(selected_job_id)
-            app_rec = job_repo.get_application_by_job_id(selected_job_id)
+            # Apply Filters
+            filtered_ranked = []
+            for r in ranked_matches:
+                nj = job_repo.get_normalized_job(r.job_id)
+                if not nj:
+                    continue
 
-            if norm_job and selected_match:
+                # Geo Filter
+                is_india = (nj.country or "India").lower() == "india"
+                if filter_geo == "India" and not is_india:
+                    continue
+                if filter_geo == "Overseas" and is_india:
+                    continue
+
+                # Freshness Filter
+                f_status = getattr(nj, "freshness_status", None)
+                if filter_fresh == "<6h (Ultra-Fresh)" and f_status != FreshnessStatus.FRESH_0_6_HOURS:
+                    continue
+                if filter_fresh == "<24h (Fresh)" and f_status not in (FreshnessStatus.FRESH_0_6_HOURS, FreshnessStatus.FRESH_6_24_HOURS):
+                    continue
+                if filter_fresh == "1-3 Days" and f_status != FreshnessStatus.RECENT_1_3_DAYS:
+                    continue
+
+                # Match Score Filter
+                if filter_match == "80%+ (Strong Match)" and r.match_score < 80.0:
+                    continue
+                if filter_match == "70%+" and r.match_score < 70.0:
+                    continue
+                if filter_match == "60%+" and r.match_score < 60.0:
+                    continue
+
+                # Role Filter
+                if filter_role != "All":
+                    target_kw = filter_role.lower()
+                    if target_kw not in (nj.title or "").lower() and target_kw not in (nj.role_category or "").lower():
+                        continue
+
+                filtered_ranked.append((r, nj))
+
+            if not filtered_ranked:
+                st.warning("No opportunities match the selected filter criteria. Try adjusting the filters above.")
+            else:
+                st.write(f"Displaying **{len(filtered_ranked)}** matched opportunity(s):")
+                job_choices = {
+                    f"{nj.company} — {nj.title} ({nj.location or 'India'}) [{getattr(nj, 'freshness_status', 'unknown')}] [Match: {int(r.match_score)}/100]": r.job_id
+                    for r, nj in filtered_ranked
+                }
+                selected_choice = st.selectbox("Select Opportunity to Inspect & Action:", list(job_choices.keys()))
+                selected_job_id = job_choices[selected_choice]
+
+                selected_pair = next(item for item in filtered_ranked if item[0].job_id == selected_job_id)
+                selected_match, norm_job = selected_pair[0], selected_pair[1]
+                app_rec = job_repo.get_application_by_job_id(selected_job_id)
+
+                # Priority and Freshness Badges
+                f_stat = getattr(norm_job, "freshness_status", "unknown")
+                f_age = getattr(norm_job, "freshness_age_hours", None)
+                fresh_badge = f"{f_age:.1f}h ago" if f_age is not None else str(f_stat)
+
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Company & Role", f"{norm_job.company}", norm_job.title)
-                c2.metric("Match Score", f"{int(selected_match.match_score)}/100")
-                c3.metric("Application Status", app_rec.status.value.upper() if app_rec else "DISCOVERED")
-                c4.metric("Eligibility", "ELIGIBLE" if selected_match.is_eligible else "INELIGIBLE")
+                c2.metric("7D Match Score", f"{int(selected_match.match_score)}/100")
+                c3.metric("Freshness Status", f"{f_stat.upper()}", fresh_badge)
+                c4.metric("Application Status", app_rec.status.value.upper() if app_rec else "DISCOVERED")
 
-                st.write(f"**Location:** {norm_job.location or 'Not specified'} | **Source:** `{norm_job.source}`")
+                geo_loc = f"{norm_job.location or 'Not specified'}, {norm_job.country or 'India'}"
+                st.write(f"📍 **Location:** {geo_loc} | 🏢 **Workplace:** `{getattr(norm_job, 'workplace_type', 'unknown')}` | 🛡️ **Visa Sponsorship:** `{getattr(norm_job, 'visa_sponsorship', 'unknown')}`")
+                st.write(f"🔗 **Discovered From Source(s):** `{', '.join(getattr(norm_job, 'source_references', []) or [norm_job.source])}`")
                 if norm_job.application_url:
-                    st.markdown(f"**Job Posting Link:** [{norm_job.application_url}]({norm_job.application_url})")
+                    st.markdown(f"**Official Job Application Portal:** [{norm_job.application_url}]({norm_job.application_url})")
 
                 # Match Details
                 col_sk1, col_sk2, col_sk3 = st.columns(3)
@@ -309,7 +437,7 @@ def main():
 
                 with col_act1:
                     if st.button("📌 Shortlist Job", key=f"short_{selected_job_id}"):
-                        app_service.shortlist_job(selected_job_id, notes="Shortlisted from Jobs view.")
+                        app_service.shortlist_job(selected_job_id, notes="Shortlisted from Fresh Jobs view.")
                         st.success("Job marked as SHORTLISTED!")
                         st.rerun()
 

@@ -251,6 +251,41 @@ CREATE TABLE IF NOT EXISTS proposed_schedule_notifications (
 );
 """
 
+CREATE_JOB_SOURCE_RUNS_TABLE = """
+CREATE TABLE IF NOT EXISTS job_source_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_name TEXT NOT NULL,
+    run_timestamp TEXT NOT NULL,
+    status TEXT NOT NULL,
+    jobs_discovered INTEGER NOT NULL DEFAULT 0,
+    jobs_accepted INTEGER NOT NULL DEFAULT 0,
+    jobs_rejected INTEGER NOT NULL DEFAULT 0,
+    fresh_jobs_count INTEGER NOT NULL DEFAULT 0,
+    duration_ms REAL NOT NULL DEFAULT 0.0,
+    error_message TEXT
+);
+"""
+
+CREATE_JOB_ALERTS_TABLE = """
+CREATE TABLE IF NOT EXISTS job_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    company TEXT NOT NULL,
+    title TEXT NOT NULL,
+    location TEXT,
+    country TEXT,
+    published_at TEXT,
+    freshness_status TEXT NOT NULL,
+    freshness_age_hours REAL,
+    match_score REAL NOT NULL,
+    priority TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    notification_proposal_id INTEGER,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES normalized_jobs (id) ON DELETE CASCADE
+);
+"""
+
 CREATE_INDEXES = """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_normalized_jobs_fingerprint ON normalized_jobs (fingerprint);
 CREATE INDEX IF NOT EXISTS idx_normalized_jobs_company ON normalized_jobs (company);
@@ -282,11 +317,38 @@ CREATE INDEX IF NOT EXISTS idx_preparation_schedules_job_id ON preparation_sched
 CREATE INDEX IF NOT EXISTS idx_tailored_resumes_job_id ON tailored_resumes (target_job_id);
 CREATE INDEX IF NOT EXISTS idx_tailored_resumes_status ON tailored_resumes (status);
 CREATE INDEX IF NOT EXISTS idx_proposed_schedule_notifications_status ON proposed_schedule_notifications (status);
+CREATE INDEX IF NOT EXISTS idx_job_source_runs_source ON job_source_runs (source_name);
+CREATE INDEX IF NOT EXISTS idx_job_source_runs_timestamp ON job_source_runs (run_timestamp);
+CREATE INDEX IF NOT EXISTS idx_job_alerts_job_id ON job_alerts (job_id);
+CREATE INDEX IF NOT EXISTS idx_job_alerts_priority ON job_alerts (priority);
+CREATE INDEX IF NOT EXISTS idx_job_alerts_status ON job_alerts (status);
 """
 
 
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Safely and idempotently ensure new schema columns exist in existing SQLite databases."""
+    try:
+        cursor = conn.execute("PRAGMA table_info(normalized_jobs);")
+        existing_cols = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in cursor.fetchall()}
+        if existing_cols:
+            new_cols = {
+                "published_at": "TEXT",
+                "freshness_status": "TEXT DEFAULT 'unknown'",
+                "freshness_age_hours": "REAL",
+                "workplace_type": "TEXT DEFAULT 'unknown'",
+                "visa_sponsorship": "TEXT DEFAULT 'unknown'",
+                "source_references": "TEXT",
+            }
+            for col_name, col_def in new_cols.items():
+                if col_name not in existing_cols:
+                    conn.execute(f"ALTER TABLE normalized_jobs ADD COLUMN {col_name} {col_def};")
+    except sqlite3.Error:
+        pass
+
+
+
 def create_schema(conn: sqlite3.Connection) -> None:
-    """Execute DDL statements to set up tables and indexes."""
+    """Execute DDL statements to set up tables, columns, and indexes."""
     with conn:
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute(CREATE_RAW_JOBS_TABLE)
@@ -303,5 +365,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
         conn.execute(CREATE_PREPARATION_SCHEDULES_TABLE)
         conn.execute(CREATE_TAILORED_RESUMES_TABLE)
         conn.execute(CREATE_PROPOSED_SCHEDULE_NOTIFICATIONS_TABLE)
+        conn.execute(CREATE_JOB_SOURCE_RUNS_TABLE)
+        conn.execute(CREATE_JOB_ALERTS_TABLE)
+        _migrate_schema(conn)
         conn.executescript(CREATE_INDEXES)
+
+
+create_tables = create_schema
+
 

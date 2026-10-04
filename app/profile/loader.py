@@ -70,3 +70,7 @@ def load_fact_bank(path: Path | str | None = None) -> FactBank:
         raise FactBankLoadError(
             f"Fact bank validation failed for {target_path}:\n{exc}"
         ) from exc
+
+
+load_candidate_profile = load_profile
+

@@ -51,3 +51,9 @@ class AppSettings(BaseSettings):
 
 
 settings = AppSettings()
+
+
+def get_settings() -> AppSettings:
+    """Return the global application settings instance."""
+    return settings
+
