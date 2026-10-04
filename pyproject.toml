@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-ai"
+version = "0.1.0"
+description = "Local-first personal Job AI system for VLSI Design Verification freshers"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Job AI Team" }
+]
+dependencies = [
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "pyyaml>=6.0.1",
+    "streamlit>=1.35.0",
+    "python-docx>=1.1.0",
+    "reportlab>=4.1.0",
+    "pypdf>=4.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

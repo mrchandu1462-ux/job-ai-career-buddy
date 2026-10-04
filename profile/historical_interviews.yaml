@@ -1,0 +1,128 @@
+# Verified Historical Interview Questions & Knowledge Base for VLSI / DV Fresher
+source: "Historical Semiconductor Interview Question Bank (2024-2026 Verified)"
+source_type: "verified_reference"
+original_reference: "Verified Technical Interviews Archive"
+
+session:
+  company: "Qualcomm India"
+  role: "Design Verification Engineer"
+  date: "2025-11-15"
+  round: "Technical Round 1 & 2"
+  outcome: "Completed"
+  notes: "Focus heavily on UVM Phases, TLM analysis FIFOs, SVA implication, and Async FIFO CDC."
+
+questions:
+  - company: "Qualcomm"
+    role: "Design Verification Engineer"
+    question: "Explain the difference between uvm_component and uvm_sequence_item in terms of phases, hierarchy, and lifetime."
+    topic: "UVM Components"
+    category: "technical"
+    difficulty: "medium"
+    expected_answer: "uvm_component is persistent, rooted in uvm_top, participates in phased execution, and has hierarchical parent-child relationships. uvm_sequence_item is transient, created on-demand, processed through sequencers to drivers, and garbage collected."
+    was_correct: true
+    source: "Qualcomm Technical Interview 2025"
+    source_type: "interview"
+    verified: true
+    times_asked: 3
+
+  - company: "Qualcomm"
+    role: "Design Verification Engineer"
+    question: "How do you synchronize a multi-bit data bus across asynchronous clock domains safely?"
+    topic: "Clock Domain Crossing"
+    category: "technical"
+    difficulty: "hard"
+    expected_answer: "Multi-bit data cannot use simple multi-flop synchronizers due to bus skew and reconvergence. Use an Asynchronous FIFO with Gray-coded pointers, or a handshaking mechanism (REQ/ACK synchronizers with stable data mux)."
+    was_correct: false
+    source: "Qualcomm Technical Interview 2025"
+    source_type: "interview"
+    verified: true
+    times_asked: 4
+
+  - company: "Texas Instruments"
+    role: "ASIC Verification Engineer"
+    question: "Why does an Async FIFO require Gray code for write and read pointers instead of standard binary counters?"
+    topic: "Async FIFO"
+    category: "technical"
+    difficulty: "medium"
+    expected_answer: "In binary counters, multiple bits can transition simultaneously (e.g. 0111 to 1000 flips 4 bits). Unequal routing delay across clock domains causes synchronizers to capture intermediate glitch values. Gray code changes exactly 1 bit per count, guaranteeing at most 1 cycle of pointer lag without corrupting values."
+    was_correct: true
+    source: "Texas Instruments Technical 2025"
+    source_type: "interview"
+    verified: true
+    times_asked: 5
+
+  - company: "Texas Instruments"
+    role: "ASIC Verification Engineer"
+    question: "Explain the 5 independent channels of AXI4 and why VALID/READY handshakes cannot have cyclic dependencies."
+    topic: "AXI Protocol"
+    category: "technical"
+    difficulty: "medium"
+    expected_answer: "The 5 channels are AW (Write Address), W (Write Data), B (Write Response), AR (Read Address), and R (Read Data). AXI spec forbids VALID from waiting for READY to prevent deadlocks; READY may wait for VALID."
+    was_correct: true
+    source: "Texas Instruments Technical 2025"
+    source_type: "interview"
+    verified: true
+    times_asked: 3
+
+  - company: "AMD"
+    role: "Design Verification Engineer"
+    question: "Write a SystemVerilog concurrent assertion verifying that when grant is asserted, req must have been high on the previous cycle."
+    topic: "SystemVerilog Assertions"
+    category: "technical"
+    difficulty: "medium"
+    expected_answer: "property p_grant_req; @(posedge clk) disable iff (!rst_n) grant |-> $past(req, 1); endproperty assert property(p_grant_req);"
+    was_correct: true
+    source: "AMD Technical Interview 2025"
+    source_type: "interview"
+    verified: true
+    times_asked: 2
+
+  - company: "Synopsys"
+    role: "Verification Engineer"
+    question: "Explain the difference between `solve x before y` and constraint distribution in SystemVerilog."
+    topic: "Constrained Random Verification"
+    category: "technical"
+    difficulty: "medium"
+    expected_answer: "solve...before only changes the probability distribution of solution space without eliminating any legal solutions. It cannot resolve conflicting or contradictory constraints."
+    was_correct: false
+    source: "Synopsys Mock Technical"
+    source_type: "mock"
+    verified: true
+    times_asked: 2
+
+  - company: "NVIDIA"
+    role: "ASIC Verification Engineer"
+    question: "What is the difference between shallow copy and deep copy in SystemVerilog classes?"
+    topic: "SystemVerilog OOP"
+    category: "technical"
+    difficulty: "easy"
+    expected_answer: "Shallow copy (new obj) copies all variables but only copies handles for nested objects (shared reference). Deep copy creates new instances of nested objects recursively."
+    was_correct: true
+    source: "NVIDIA Technical 2025"
+    source_type: "interview"
+    verified: true
+    times_asked: 3
+
+weak_areas:
+  - topic: "Clock Domain Crossing"
+    description: "Multi-bit data synchronization handshakes and MUX synchronizer timing constraints."
+    severity: "high"
+    confidence: 0.35
+
+  - topic: "Constrained Random Verification"
+    description: "Complex multi-variable solve...before implications and soft constraint overrides."
+    severity: "medium"
+    confidence: 0.45
+
+knowledge_items:
+  - topic: "Async FIFO"
+    concept: "Full Condition Gray Code Detection"
+    explanation: "FIFO Full occurs when write pointer catches up to synchronized read pointer from behind: MSB and 2nd MSB inverted, lower bits identical (wptr_gray == {~rptr_gray[ADDR_WIDTH:ADDR_WIDTH-1], rptr_gray[ADDR_WIDTH-2:0]})."
+    source: "Clifford Cummings Sunburst CDC Paper"
+    verified: true
+
+  - topic: "UVM"
+    concept: "UVM Factory Registration and Type Override"
+    explanation: "`uvm_component_utils(my_driver) registers class with factory. `set_type_override_by_type(original_driver::get_type(), specialized_driver::get_type()) allows dynamic polymorphism without editing base testbench code."
+    source: "Accellera UVM 1.2 User Guide"
+    verified: true

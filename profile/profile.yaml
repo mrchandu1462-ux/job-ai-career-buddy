@@ -1,0 +1,31 @@
+# Candidate Profile Configuration
+# Note: Personal fields are structured without inventing unverified facts.
+
+candidate:
+  target_roles:
+    - "Design Verification Engineer"
+    - "Functional Verification Engineer"
+    - "ASIC Verification Engineer"
+    - "SoC Verification Engineer"
+    - "RTL Design Engineer"
+    - "Verification Intern"
+    - "RTL Design Intern"
+    - "VLSI Intern"
+    - "Graduate Engineer Trainee"
+
+  graduation_year: 2025
+  experience_level: "Fresher / Entry-Level"
+
+  locations:
+    india_priority:
+      - "Bengaluru"
+      - "Hyderabad"
+      - "Chennai"
+      - "Pune"
+      - "Noida"
+    overseas_enabled: true
+    overseas_require_sponsorship: true
+
+  work_authorization:
+    citizen_of: "India"
+    requires_sponsorship_overseas: true

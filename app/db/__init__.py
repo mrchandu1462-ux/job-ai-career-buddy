@@ -1,0 +1,63 @@
+"""Database package for local SQLite operations, repositories, audit events, and data models."""
+
+from app.db.connection import DatabaseConnection, get_connection, get_db
+from app.db.models import (
+    ApplicationEvent,
+    ApplicationEventType,
+    ApplicationRecord,
+    ApplicationStatus,
+    AssessmentRecord,
+    AssessmentStatus,
+    AssessmentType,
+    InterviewQuestion,
+    InterviewSession,
+    JobStatus,
+    KnowledgeItem,
+    MockQuestionItem,
+    NormalizedJob,
+    NotificationRecord,
+    NotificationType,
+    PreparationSchedule,
+    PreparationSession,
+    RawJob,
+    ReadinessAssessment,
+    ScheduleMilestone,
+    WeakArea,
+)
+from app.db.repository import (
+    ApplicationNotFoundError,
+    DuplicateFingerprintError,
+    JobRepository,
+)
+from app.db.schema import create_schema
+
+__all__ = [
+    "ApplicationEvent",
+    "ApplicationEventType",
+    "ApplicationNotFoundError",
+    "ApplicationRecord",
+    "ApplicationStatus",
+    "AssessmentRecord",
+    "AssessmentStatus",
+    "AssessmentType",
+    "DatabaseConnection",
+    "DuplicateFingerprintError",
+    "InterviewQuestion",
+    "InterviewSession",
+    "JobRepository",
+    "JobStatus",
+    "KnowledgeItem",
+    "MockQuestionItem",
+    "NormalizedJob",
+    "NotificationRecord",
+    "NotificationType",
+    "PreparationSchedule",
+    "PreparationSession",
+    "RawJob",
+    "ReadinessAssessment",
+    "ScheduleMilestone",
+    "WeakArea",
+    "create_schema",
+    "get_connection",
+    "get_db",
+]

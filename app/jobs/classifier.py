@@ -1,0 +1,158 @@
+"""Role classification engine categorizing semiconductor job opportunities."""
+
+import re
+from enum import Enum
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class RoleCategory(str, Enum):
+    """Categorized role classifications for VLSI/semiconductor careers."""
+
+    DESIGN_VERIFICATION = "DESIGN_VERIFICATION"
+    FUNCTIONAL_VERIFICATION = "FUNCTIONAL_VERIFICATION"
+    ASIC_VERIFICATION = "ASIC_VERIFICATION"
+    SOC_VERIFICATION = "SOC_VERIFICATION"
+    RTL_DESIGN = "RTL_DESIGN"
+    VERIFICATION_INTERN = "VERIFICATION_INTERN"
+    RTL_INTERN = "RTL_INTERN"
+    VLSI_INTERN = "VLSI_INTERN"
+    GRADUATE_ENGINEER_TRAINEE = "GRADUATE_ENGINEER_TRAINEE"
+    OTHER = "OTHER"
+
+
+class RoleClassificationResult(BaseModel):
+    """Result of role classification with explainable scoring and justification."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    category: RoleCategory = Field(..., description="Classified role category.")
+    relevance_score: float = Field(..., ge=0.0, le=20.0, description="Relevance score contribution (0-20 points).")
+    matched_keywords: list[str] = Field(default_factory=list, description="Keywords that matched.")
+    justification: str = Field(..., min_length=1, description="Human-readable reason for the classification.")
+
+
+class RoleClassifier:
+    """Classifies semiconductor jobs into target role categories with transparent scoring."""
+
+    def classify(self, title: str, description: str = "") -> RoleClassificationResult:
+        """Classify a job title and description into the appropriate RoleCategory."""
+        title_lower = title.lower()
+        desc_lower = description.lower()
+        combined = f"{title_lower} {desc_lower}"
+
+        # 1. Verification Intern
+        if re.search(r"\b(?:verification|dv)\s*intern(?:ship)?\b", title_lower) or (
+            re.search(r"\bintern(?:ship)?\b", title_lower) and re.search(r"\b(?:verification|uvm|systemverilog)\b", combined)
+        ):
+            return RoleClassificationResult(
+                category=RoleCategory.VERIFICATION_INTERN,
+                relevance_score=19.0,
+                matched_keywords=["verification intern", "internship"],
+                justification="Target verification internship opportunity ideally suited for 2025 fresher.",
+            )
+
+        # 2. RTL / Design Intern
+        if re.search(r"\b(?:rtl|digital\s*design|asic|soc)\s*intern(?:ship)?\b", title_lower) or (
+            re.search(r"\bintern(?:ship)?\b", title_lower) and re.search(r"\b(?:rtl|verilog|digital\s*design)\b", combined)
+        ):
+            return RoleClassificationResult(
+                category=RoleCategory.RTL_INTERN,
+                relevance_score=17.5,
+                matched_keywords=["rtl intern", "digital design intern"],
+                justification="Adjacent RTL / Digital Design internship opportunity with strong semiconductor relevance.",
+            )
+
+        # 3. VLSI Intern / General Hardware Intern
+        if re.search(r"\bvlsi\s*intern(?:ship)?\b", title_lower) or (
+            re.search(r"\bintern(?:ship)?\b", title_lower) and re.search(r"\bvlsi\b", combined)
+        ):
+            return RoleClassificationResult(
+                category=RoleCategory.VLSI_INTERN,
+                relevance_score=17.0,
+                matched_keywords=["vlsi intern"],
+                justification="General VLSI internship with entry-level semiconductor scope.",
+            )
+
+        # 4. Graduate Engineer Trainee (GET)
+        if re.search(r"\b(?:graduate\s*engineer\s*trainee|get|trainee\s*engineer|college\s*trainee)\b", title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.GRADUATE_ENGINEER_TRAINEE,
+                relevance_score=18.0,
+                matched_keywords=["graduate engineer trainee", "get"],
+                justification="Campus/Fresher Graduate Engineer Trainee position with structured onboarding.",
+            )
+
+        # 5. ASIC Verification
+        if re.search(r"\basic\s*(?:verification|validation|dv)\b", title_lower) or (
+            "asic" in title_lower and "verification" in combined
+        ):
+            return RoleClassificationResult(
+                category=RoleCategory.ASIC_VERIFICATION,
+                relevance_score=20.0,
+                matched_keywords=["asic verification", "asic dv"],
+                justification="Direct core ASIC Verification engineering role aligning with primary career goal.",
+            )
+
+        # 6. SoC Verification
+        if re.search(r"\bsoc\s*(?:verification|validation|dv)\b", title_lower) or (
+            "soc" in title_lower and "verification" in combined
+        ):
+            return RoleClassificationResult(
+                category=RoleCategory.SOC_VERIFICATION,
+                relevance_score=20.0,
+                matched_keywords=["soc verification", "soc dv"],
+                justification="Direct core SoC Verification engineering role aligning with primary career goal.",
+            )
+
+        # 7. Functional Verification
+        if re.search(r"\bfunctional\s*verification\b", title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.FUNCTIONAL_VERIFICATION,
+                relevance_score=20.0,
+                matched_keywords=["functional verification"],
+                justification="Direct core Functional Verification role matching candidate SV/UVM specialization.",
+            )
+
+        # 8. General Design Verification / DV / Verification Engineer / ASIC Validation
+        if re.search(r"\b(?:design\s*verification|dv\s*engineer|verification\s*engineer|asic\s*validation)\b", title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.DESIGN_VERIFICATION,
+                relevance_score=20.0,
+                matched_keywords=["design verification", "verification engineer"],
+                justification="Primary target Design Verification engineering role.",
+            )
+
+        # 9. RTL Design / Digital Design Engineer
+        if re.search(r"\b(?:rtl|digital\s*design|logic\s*design)\b", title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.RTL_DESIGN,
+                relevance_score=16.0,
+                matched_keywords=["rtl design", "digital design"],
+                justification="Adjacent RTL / Digital Design role where verification skills provide strong foundation.",
+            )
+
+        # 10. Verification mentioned in body or adjacent roles
+        if "verification" in combined or "uvm" in combined or "systemverilog" in combined:
+            return RoleClassificationResult(
+                category=RoleCategory.DESIGN_VERIFICATION,
+                relevance_score=15.0,
+                matched_keywords=["verification keywords in description"],
+                justification="Position title differs but description heavily features core verification responsibilities.",
+            )
+
+        # 11. Other semiconductor / hardware engineering
+        if any(w in combined for w in ["semiconductor", "fpga", "hardware", "silicon", "vlsi"]):
+            return RoleClassificationResult(
+                category=RoleCategory.OTHER,
+                relevance_score=10.0,
+                matched_keywords=["semiconductor / hardware general"],
+                justification="General hardware/semiconductor role with partial overlap.",
+            )
+
+        return RoleClassificationResult(
+            category=RoleCategory.OTHER,
+            relevance_score=5.0,
+            matched_keywords=[],
+            justification="Role has limited direct alignment with VLSI Design Verification.",
+        )

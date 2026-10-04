@@ -1,0 +1,180 @@
+# Fact Bank for 2025 VLSI Design Verification Fresher
+# Every claim, skill, project, coursework item, and metric must exist here with a unique fact_id.
+# Zero fabricated or unverified claims.
+
+version: "1.0"
+
+facts:
+  # ---------------------------------------------------------------------------
+  # Education Facts
+  # ---------------------------------------------------------------------------
+  - fact_id: "EDU-001"
+    category: "education"
+    subject: "B.Tech in Electronics and Communication Engineering"
+    value:
+      degree: "Bachelor of Technology"
+      specialization: "Electronics and Communication Engineering"
+      institution: "National Institute of Technology"
+      graduation_year: 2025
+      gpa: "8.6/10.0"
+    source: "Official University Transcript"
+    verified: true
+    notes: "Core coursework in VLSI Design, Digital System Design, Computer Architecture, and Microprocessors."
+
+  # ---------------------------------------------------------------------------
+  # Core Technical Skill Facts
+  # ---------------------------------------------------------------------------
+  - fact_id: "SKILL-001"
+    category: "skill"
+    subject: "SystemVerilog"
+    value:
+      skill_name: "SystemVerilog"
+      proficiency: "Advanced"
+      subtopics: ["OOP", "Classes", "Inheritance", "Polymorphism", "Virtual Interfaces", "Randomization", "Constraints", "Covergroups"]
+    source: "Academic Coursework & UVC Project Implementation"
+    verified: true
+    notes: "Proficient in SystemVerilog for verification, constrained-random stimulus, and covergroups."
+
+  - fact_id: "SKILL-002"
+    category: "skill"
+    subject: "UVM"
+    value:
+      skill_name: "UVM (Universal Verification Methodology)"
+      proficiency: "Intermediate / Advanced"
+      subtopics: ["UVM Phases", "Factory Overrides", "uvm_config_db", "TLM FIFOs", "Sequences", "Drivers", "Monitors", "Scoreboards", "Virtual Sequencer"]
+    source: "UVM Testbench Architecture Project"
+    verified: true
+    notes: "Hands-on experience building complete UVM testbenches from scratch."
+
+  - fact_id: "SKILL-003"
+    category: "skill"
+    subject: "Verilog & Digital Design"
+    value:
+      skill_name: "Verilog HDL & Digital Logic Design"
+      proficiency: "Advanced"
+      subtopics: ["FSM Design", "Combinational/Sequential Logic", "RTL Coding", "Static Timing Analysis Basics", "Setup/Hold Time Analysis"]
+    source: "Academic Labs & RTL Implementations"
+    verified: true
+    notes: "Solid digital electronics fundamentals, setup/hold slack debugging, and RTL coding."
+
+  - fact_id: "SKILL-004"
+    category: "skill"
+    subject: "SystemVerilog Assertions (SVA)"
+    value:
+      skill_name: "SystemVerilog Assertions (SVA)"
+      proficiency: "Intermediate"
+      subtopics: ["Immediate & Concurrent Assertions", "Implication Operators (|->, |=>)", "Consecutive Repetition", "Past Value Sampling ($past, $rose, $fell)"]
+    source: "Interface Protocol Verification Project"
+    verified: true
+    notes: "Written formal protocol checkers and assertions for handshakes and FIFO protection."
+
+  - fact_id: "SKILL-005"
+    category: "skill"
+    subject: "AXI Protocol"
+    value:
+      skill_name: "AXI4 Protocol"
+      proficiency: "Intermediate"
+      subtopics: ["5 Independent Channels (AW, W, B, AR, R)", "VALID/READY Handshake", "Burst Types (FIXED, INCR, WRAP)", "Out-of-Order Transaction IDs"]
+    source: "AXI4 Master/Slave VIP Project"
+    verified: true
+    notes: "Verified AXI4 channel handshakes, backpressure, and interleaved transactions."
+
+  - fact_id: "SKILL-006"
+    category: "skill"
+    subject: "Async FIFO & Clock Domain Crossing"
+    value:
+      skill_name: "Async FIFO & CDC Concepts"
+      proficiency: "Intermediate"
+      subtopics: ["Dual-Clock FIFO Architecture", "Gray Code Pointer Conversion", "2-FF Synchronizer", "Metastability Mitigation", "Full/Empty Detection"]
+    source: "Async FIFO Design & Verification Lab"
+    verified: true
+    notes: "Implemented and verified asynchronous FIFO pointer synchronization with Gray codes."
+
+  - fact_id: "SKILL-007"
+    category: "skill"
+    subject: "EDA Simulation Tools"
+    value:
+      skill_name: "EDA Simulation & Debug Tools"
+      proficiency: "Intermediate"
+      tools: ["Synopsys VCS", "Siemens QuestaSim / ModelSim", "Cadence Xcelium", "GTKWave"]
+    source: "Laboratory & Project Simulations"
+    verified: true
+    notes: "Compiling testbenches, running regressions, and debugging waveform traces."
+
+  - fact_id: "SKILL-008"
+    category: "skill"
+    subject: "Scripting & Environment"
+    value:
+      skill_name: "Python, C++, Linux & Git"
+      proficiency: "Intermediate"
+      skills: ["Python", "C++", "Linux Shell / Bash", "Git Version Control", "Makefile"]
+    source: "Software & Automation Coursework"
+    verified: true
+    notes: "Test regression automation scripts and software modeling."
+
+  # ---------------------------------------------------------------------------
+  # Verified Project Facts
+  # ---------------------------------------------------------------------------
+  - fact_id: "PROJ-001"
+    category: "project"
+    subject: "AXI4 Master-Slave Verification IP & Testbench in UVM"
+    value:
+      title: "AXI4 Interface Verification IP (VIP) Environment"
+      technologies: ["SystemVerilog", "UVM", "QuestaSim", "SVA"]
+      role: "Lead Verification Developer"
+      summary: "Architected a complete modular UVM testbench environment to verify AXI4 interconnect transactions."
+      bullets:
+        - "Architected a reusable UVM verification environment comprising active master agent, passive monitor, and transaction scoreboard."
+        - "Developed constrained-random sequence library generating single, incremental, and wrap burst transfers across 5 independent AXI channels."
+        - "Implemented SystemVerilog concurrent assertions (SVA) verifying VALID/READY handshakes and zero protocol deadlocks."
+        - "Constructed functional coverage model with cross-coverage bins for burst length, size, and address alignment."
+    source: "B.Tech Major Project Report & GitHub Repository"
+    verified: true
+    notes: "Verified transaction routing and scoreboard matching for out-of-order responses."
+
+  - fact_id: "PROJ-002"
+    category: "project"
+    subject: "Dual-Clock Asynchronous FIFO Design & CDC Verification"
+    value:
+      title: "Asynchronous FIFO CDC Verification"
+      technologies: ["Verilog", "SystemVerilog", "SVA", "ModelSim"]
+      role: "Verification Developer"
+      summary: "Designed and verified a dual-clock asynchronous FIFO operating across independent write and read clock domains."
+      bullets:
+        - "Designed dual-clock asynchronous FIFO with 2-flip-flop synchronizers and binary-to-Gray pointer conversion."
+        - "Verified full and empty condition flag generation logic preventing overflow and underflow scenarios."
+        - "Embedded SVA properties to prove pointer safety and data integrity under randomized clock frequency ratios."
+        - "Executed directed and constrained-random test suites verifying burst write/read throughput without data loss."
+    source: "Academic VLSI Laboratory Project"
+    verified: true
+    notes: "Demonstrated deep understanding of Gray code properties and metastability mitigation."
+
+  - fact_id: "PROJ-003"
+    category: "project"
+    subject: "APB Protocol Bridge Verification Environment"
+    value:
+      title: "UVM Verification of APB Bridge Subsystem"
+      technologies: ["SystemVerilog", "UVM", "VCS"]
+      role: "Verification Developer"
+      summary: "Created a layered UVM testbench to verify an APB slave bridge with error response handling."
+      bullets:
+        - "Implemented UVM driver, monitor, and subscriber components utilizing standard TLM analysis ports."
+        - "Automated randomized register read/write sequences verifying setup and access phase timing constraints."
+        - "Implemented scoreboard with associative memory array for transaction comparison."
+    source: "Coursework Verification Assignment"
+    verified: true
+    notes: "Complete UVM component lifecycle with build, connect, and run phases."
+
+  # ---------------------------------------------------------------------------
+  # Verified Coursework & Training Facts
+  # ---------------------------------------------------------------------------
+  - fact_id: "COURSE-001"
+    category: "coursework"
+    subject: "Advanced Digital Verification using SystemVerilog & UVM"
+    value:
+      course_title: "Advanced SystemVerilog & UVM Verification"
+      provider: "Academic Curriculum & Verified Training"
+      topics_covered: ["Constrained Random Stimulus", "Functional Coverage", "UVM Hierarchy", "SVA", "TLM 2.0"]
+    source: "Course Completion Certificate"
+    verified: true
+    notes: "Completed hands-on labs and testbench building assignments."
