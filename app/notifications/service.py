@@ -7,22 +7,41 @@ deduplication, email rendering, delivery audit logging, and human safety boundar
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from app.config import AppSettings, get_settings
-from app.db.models import ApplicationStatus, DeliveryStatus, EmailDeliveryRecord
+from app.db.models import (
+    ApplicationStatus,
+    DeliveryStatus,
+    EmailDeliveryRecord,
+    NormalizedJob,
+)
 from app.db.repository import JobRepository
 from app.notifications.email import BaseEmailProvider, get_email_provider
-from app.notifications.models import DeliveryResult
+from app.notifications.models import DeliveryResult, EmailAttachment
 from app.notifications.renderer import EmailTemplateRenderer
+from app.profile.loader import load_candidate_profile, load_fact_bank
+from app.profile.models import CandidateProfile, FactBank
+from app.resume.engine import ResumeTailoringEngine
+from app.resume.export.pdf import PDFResumeExporter
+from app.resume.validator import FactIntegrityValidator
 
 if TYPE_CHECKING:
     from app.application.intelligence import ApplicationPackage
     from app.jobs.digest import DailyCareerDigest
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_filename(name: str) -> str:
+    """Sanitize string for safe inclusion in filenames, preventing path traversal and unsafe characters."""
+    sanitized = re.sub(r'[\\/*?:"<>|]', "", name)
+    sanitized = re.sub(r"\s+", "_", sanitized.strip())
+    sanitized = re.sub(r"_+", "_", sanitized)
+    return sanitized.strip("._") or "Company"
 
 
 class EmailNotificationService:
@@ -34,12 +53,16 @@ class EmailNotificationService:
         settings: AppSettings | None = None,
         provider: BaseEmailProvider | None = None,
         repo: JobRepository | None = None,
+        fact_bank: FactBank | None = None,
+        profile: CandidateProfile | None = None,
     ):
         self.conn = conn
         self.settings = settings or get_settings()
         self.repo = repo or JobRepository(conn)
         self.provider = provider or get_email_provider(self.settings)
         self.renderer = EmailTemplateRenderer(dashboard_base_url=self.settings.dashboard_url)
+        self.fact_bank = fact_bank or load_fact_bank()
+        self.profile = profile or load_candidate_profile()
 
     def process_immediate_alerts(
         self,
@@ -198,7 +221,107 @@ class EmailNotificationService:
                 is_material_update=is_material_update,
             )
 
-            # 5. Persist Initial Queued Delivery Record
+            # 5. Build Attachments: Fact-Grounded Tailored Resume (PDF) & Custom Cover Letter (.txt)
+            attachments: list[EmailAttachment] = []
+            sanitized_company = _sanitize_filename(pkg.company)
+            candidate_name_raw = getattr(self.profile.candidate, "name", "Chandu Saikam") if hasattr(self, "profile") else "Chandu Saikam"
+            candidate_name_sanitized = _sanitize_filename(candidate_name_raw)
+
+            # 5a. Generate & Audit Tailored Resume (PDF)
+            try:
+                resume_engine = ResumeTailoringEngine(self.conn, fact_bank=self.fact_bank, profile=self.profile)
+                db_job = self.repo.get_normalized_job(pkg.job_id) if pkg.job_id else None
+                if not db_job and pkg_fp:
+                    db_job = self.repo.get_normalized_job_by_fingerprint(pkg_fp)
+
+                if db_job:
+                    tailored_resume = resume_engine.generate_tailored_resume(job=db_job)
+                else:
+                    fallback_job = NormalizedJob(
+                        id=pkg.job_id or None,
+                        fingerprint=pkg_fp,
+                        title=pkg.role,
+                        company=pkg.company,
+                        location=pkg.location,
+                        country=pkg.country,
+                        source="Scanner",
+                        description=f"Role: {pkg.role} at {pkg.company}",
+                        status="active",
+                        first_seen=now_iso,
+                        last_seen=now_iso,
+                    )
+                    tailored_resume = resume_engine.generate_tailored_resume(job=fallback_job)
+
+                validator = FactIntegrityValidator(self.fact_bank)
+                audit_report = validator.audit_resume(tailored_resume)
+                if audit_report.integrity_status != "PASS":
+                    logger.error(
+                        "Fact integrity validation failed for job %s (%s): %s",
+                        pkg.job_id,
+                        pkg.company,
+                        audit_report.unsupported_claims,
+                    )
+                    raise ValueError(f"Fact integrity validation failed: {audit_report.unsupported_claims}")
+
+                pdf_exporter = PDFResumeExporter()
+                pdf_bytes = pdf_exporter.export_bytes(tailored_resume)
+
+                resume_filename = f"{candidate_name_sanitized}_Resume_{sanitized_company}.pdf"
+                attachments.append(
+                    EmailAttachment(
+                        filename=resume_filename,
+                        content=pdf_bytes,
+                        content_type="application/pdf",
+                    )
+                )
+                logger.info("Generated tailored resume attachment '%s' (%d bytes) for %s", resume_filename, len(pdf_bytes), pkg.company)
+
+            except Exception as resume_exc:
+                logger.exception("Failed to generate/validate tailored resume attachment for %s", pkg.company)
+                results.append(
+                    DeliveryResult(
+                        success=False,
+                        provider=self.settings.email_provider,
+                        status=DeliveryStatus.FAILED,
+                        error_message=f"Resume generation/validation failed: {resume_exc}",
+                        timestamp=now_iso,
+                        dry_run=dry_run,
+                        metadata={"fingerprint": pkg_fp, "error": str(resume_exc)},
+                    )
+                )
+                continue
+
+            # 5b. Generate Cover Letter (.txt)
+            try:
+                cover_letter_text = pkg.cover_letter.full_text if pkg.cover_letter else ""
+                if cover_letter_text:
+                    cl_filename = f"{sanitized_company}_Cover_Letter.txt"
+                    attachments.append(
+                        EmailAttachment(
+                            filename=cl_filename,
+                            content=cover_letter_text.encode("utf-8"),
+                            content_type="text/plain; charset=utf-8",
+                        )
+                    )
+                    logger.info("Generated cover letter attachment '%s' (%d bytes) for %s", cl_filename, len(cover_letter_text), pkg.company)
+            except Exception as cl_exc:
+                logger.exception("Failed to generate cover letter attachment for %s", pkg.company)
+                results.append(
+                    DeliveryResult(
+                        success=False,
+                        provider=self.settings.email_provider,
+                        status=DeliveryStatus.FAILED,
+                        error_message=f"Cover letter attachment failed: {cl_exc}",
+                        timestamp=now_iso,
+                        dry_run=dry_run,
+                        metadata={"fingerprint": pkg_fp, "error": str(cl_exc)},
+                    )
+                )
+                continue
+
+            msg.attachments = attachments
+
+            # 6. Persist Initial Queued Delivery Record
             delivery_record = EmailDeliveryRecord(
                 notification_id=None,
                 job_id=pkg.job_id,

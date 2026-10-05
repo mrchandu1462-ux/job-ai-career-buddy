@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 
 from app.db.models import NormalizedJob
 from app.db.repository import JobRepository
-from app.profile.loader import load_fact_bank
-from app.profile.models import FactBank, FactCategory
+from app.profile.loader import load_candidate_profile, load_fact_bank
+from app.profile.models import CandidateProfile, FactBank, FactCategory
 from app.resume.ats import ATSScorer
 from app.resume.formatter import ATSResumeFormatter
 from app.resume.models import (
@@ -27,27 +27,38 @@ class ResumeTailoringEngine:
         self,
         conn: sqlite3.Connection,
         fact_bank: FactBank | None = None,
+        profile: CandidateProfile | None = None,
         job_repo: JobRepository | None = None,
         resume_repo: ResumeRepository | None = None,
     ):
         self.conn = conn
         self.fact_bank = fact_bank or load_fact_bank()
+        self.profile = profile or load_candidate_profile()
         self.job_repo = job_repo or JobRepository(conn)
         self.resume_repo = resume_repo or ResumeRepository(conn)
         self.validator = FactIntegrityValidator(self.fact_bank)
         self.ats_scorer = ATSScorer(target_quality_gate=80.0)
 
-    def generate_tailored_resume(self, job_id: int, version: int | None = None) -> TailoredResume:
+    def generate_tailored_resume(
+        self,
+        job_id: int | None = None,
+        job: NormalizedJob | None = None,
+        version: int | None = None,
+    ) -> TailoredResume:
         """
         Synthesize an ATS-optimized, fact-grounded resume tailored to target job requirements.
         Zero fabricated skills, metrics, tools, or responsibilities.
         """
-        job: NormalizedJob | None = self.job_repo.get_normalized_job(job_id)
-        if not job:
-            raise ValueError(f"NormalizedJob with id {job_id} not found in database.")
+        if job is None:
+            if job_id is None:
+                raise ValueError("Either job_id or job must be provided.")
+            job = self.job_repo.get_normalized_job(job_id)
+            if not job:
+                raise ValueError(f"NormalizedJob with id {job_id} not found in database.")
 
+        eff_job_id = job.id or job_id
         if version is None:
-            existing_resumes = self.resume_repo.list_resumes_for_job(job_id)
+            existing_resumes = self.resume_repo.list_resumes_for_job(eff_job_id) if eff_job_id else []
             version = (existing_resumes[0].version + 1) if existing_resumes else 1
 
         now_iso = datetime.now(UTC).isoformat()
@@ -56,11 +67,11 @@ class ResumeTailoringEngine:
         resume_id = f"res_{company_slug}_v{version}_{date_slug}"
 
         # 1. Contact Info & Candidate Details
-        candidate_name = "Candidate Name"
+        candidate_name = getattr(getattr(self.profile, "candidate", None), "name", None) or "Candidate Name"
         contact_info = {
-            "location": job.location or "Bengaluru, India",
-            "email": "candidate@vlsi-cos.internal",
-            "phone": "+91-9876543210",
+            "location": job.location or getattr(getattr(self.profile, "candidate", None), "location", "Bengaluru, India") or "Bengaluru, India",
+            "email": getattr(getattr(self.profile, "candidate", None), "email", "candidate@vlsi-cos.internal") or "candidate@vlsi-cos.internal",
+            "phone": getattr(getattr(self.profile, "candidate", None), "phone", "+91-9876543210") or "+91-9876543210",
             "github": "github.com/vlsi-candidate",
             "linkedin": "linkedin.com/in/vlsi-candidate",
         }
@@ -205,7 +216,7 @@ class ResumeTailoringEngine:
         # 7. Draft Initial Resume Object
         draft_resume = TailoredResume(
             resume_id=resume_id,
-            target_job_id=job_id,
+            target_job_id=eff_job_id or 0,
             version=version,
             generated_at=now_iso,
             candidate_name=candidate_name,
@@ -220,7 +231,7 @@ class ResumeTailoringEngine:
             ats_breakdown=ATSScorer().score_resume(
                 TailoredResume.model_construct(
                     resume_id=resume_id,
-                    target_job_id=job_id,
+                    target_job_id=eff_job_id or 0,
                     version=version,
                     generated_at=now_iso,
                     candidate_name=candidate_name,
@@ -269,8 +280,12 @@ class ResumeTailoringEngine:
         draft_resume.plain_text_content = ATSResumeFormatter.render_plaintext(draft_resume)
         draft_resume.markdown_content = ATSResumeFormatter.render_markdown(draft_resume)
 
-        # 11. Persist to SQLite
-        draft_resume.id = self.resume_repo.insert_tailored_resume(draft_resume)
+        # 11. Persist to SQLite (if parent job exists in database)
+        if eff_job_id and self.job_repo.get_normalized_job(eff_job_id):
+            try:
+                draft_resume.id = self.resume_repo.insert_tailored_resume(draft_resume)
+            except sqlite3.IntegrityError:
+                pass
         return draft_resume
 
     def check_application_eligibility(

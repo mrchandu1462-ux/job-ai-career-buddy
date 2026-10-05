@@ -126,7 +126,8 @@ class EmailTemplateRenderer:
       <div style="background: #f8fafc; padding: 14px; border-radius: 6px; margin-bottom: 20px; border-left: 4px solid #3b82f6;">
         <div style="font-size: 13px; font-weight: 700; color: #1e3a8a; margin-bottom: 4px;">Selected Resume: {resume_esc}</div>
         <div style="font-size: 12px; color: #475569; margin-bottom: 8px;">{selection_reason_esc}</div>
-        <div style="font-size: 12px; color: #15803d; font-weight: 600;">✅ Fact-Grounded Cover Letter: READY (Drafted internally)</div>
+        <div style="font-size: 12px; color: #15803d; font-weight: 600; margin-bottom: 4px;">📎 Attached: Fact-Grounded Tailored Resume (PDF)</div>
+        <div style="font-size: 12px; color: #15803d; font-weight: 600;">📎 Attached: Customized Cover Letter (.txt)</div>
       </div>
 
       {warnings_html}
@@ -138,9 +139,13 @@ class EmailTemplateRenderer:
       </div>
 
       <!-- Human Safety Gate Disclaimer -->
-      <div style="margin-top: 24px; padding: 12px; background: #f1f5f9; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 11px; color: #475569; text-align: center;">
+      <div style="margin-top: 24px; padding: 14px; background: #fef2f2; border-radius: 6px; border: 1px solid #fecaca; font-size: 12px; color: #991b1b; text-align: center;">
         <strong>🛡️ MANDATORY HUMAN APPROVAL NOTICE</strong><br>
-        Final application submission is strictly human-controlled. Job-AI prepares applications but will NEVER autonomously submit forms, message recruiters, or dispatch applications without explicit candidate review and submission.
+        Final application submission is strictly human-controlled. Job-AI prepares applications but will NEVER autonomously submit forms, message recruiters, or dispatch applications without explicit candidate review and submission.<br><br>
+        <strong>HUMAN ACTION REQUIRED:</strong><br>
+        1. Review the attached tailored resume and cover letter.<br>
+        2. Verify the job details on the official employer portal.<br>
+        3. Submit the application manually.
       </div>
     </div>
 
@@ -169,7 +174,7 @@ Work Authorization: {work_auth_str}
 
 Selected Resume: {resume_str}
 Selection Reason: {selection_reason}
-Cover Letter: READY (Fact-grounded draft generated)
+Attachments: Tailored Resume (PDF) & Custom Cover Letter (.txt)
 Official Portal: {url_status}
 
 Action Links:
@@ -178,8 +183,13 @@ Action Links:
 
 {"-" * 50}
 MANDATORY HUMAN APPROVAL NOTICE:
-Final application submission requires explicit human review.
+Final application submission is strictly human-controlled.
 Job-AI does NOT automatically submit applications to external portals.
+
+HUMAN ACTION REQUIRED:
+1. Review the attached tailored resume and cover letter.
+2. Verify the job details on the official portal.
+3. Submit your application manually.
 {"=" * 50}
 """
 

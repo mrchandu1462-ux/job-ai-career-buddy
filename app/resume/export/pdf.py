@@ -1,5 +1,6 @@
 """ATS-Parser-Safe PDF Resume Exporter using standard single-column selectable flowables."""
 
+import io
 import os
 from pathlib import Path
 from xml.sax import saxutils
@@ -41,6 +42,27 @@ class PDFResumeExporter:
             topMargin=54,
             bottomMargin=54,
         )
+        story = self._build_story(resume)
+        doc.build(story)
+        return output_path
+
+    def export_bytes(self, resume: TailoredResume) -> bytes:
+        """Generate ATS-safe PDF document directly in memory as bytes."""
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            leftMargin=54,
+            rightMargin=54,
+            topMargin=54,
+            bottomMargin=54,
+        )
+        story = self._build_story(resume)
+        doc.build(story)
+        return buffer.getvalue()
+
+    def _build_story(self, resume: TailoredResume) -> list[object]:
+        """Build the linear flowable story for the ATS-safe PDF."""
 
         styles = getSampleStyleSheet()
 
@@ -192,5 +214,4 @@ class PDFResumeExporter:
             for cert in resume.certifications:
                 story.append(Paragraph(f"&bull; {saxutils.escape(cert)}", bullet_style))
 
-        doc.build(story)
-        return output_path
+        return story

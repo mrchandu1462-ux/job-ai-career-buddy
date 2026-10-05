@@ -22,6 +22,16 @@ class EmailPriority(str, Enum):
     TEST = "TEST"          # Explicit manual test email (🧪)
 
 
+class EmailAttachment(BaseModel):
+    """Represents a file attachment for an outbound email message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str = Field(..., min_length=1, description="Attachment filename with extension.")
+    content: bytes = Field(..., description="Raw binary/text content bytes of the attachment.")
+    content_type: str = Field(default="application/octet-stream", description="MIME content type.")
+
+
 class EmailMessage(BaseModel):
     """Encapsulates a fully formatted outbound email message."""
 
@@ -38,6 +48,7 @@ class EmailMessage(BaseModel):
     notification_id: int | None = None
     fingerprint: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+    attachments: list[EmailAttachment] = Field(default_factory=list, description="Attached documents (e.g. resume PDF, cover letter).")
 
 
 class DeliveryResult(BaseModel):

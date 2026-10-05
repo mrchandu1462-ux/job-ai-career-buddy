@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import abc
 import argparse
+import email.encoders
+import email.mime.application
+import email.mime.base
 import email.mime.multipart
 import email.mime.text
 import logging
@@ -58,16 +61,20 @@ class ConsoleEmailProvider(BaseEmailProvider):
         _safe_print(f"\n{prefix} Email Dispatch -> {message.recipient}")
         _safe_print(f"Subject: {message.subject}")
         _safe_print(f"Priority: {message.priority.value}")
+        if message.attachments:
+            att_summary = ", ".join(f"{a.filename} ({len(a.content)} bytes)" for a in message.attachments)
+            _safe_print(f"Attachments: [{att_summary}]")
         _safe_print("-" * 50)
         _safe_print(message.text_content[:300] + ("..." if len(message.text_content) > 300 else ""))
         _safe_print("-" * 50)
 
         logger.info(
-            "%s Email dispatched to %s | subject=%s | priority=%s",
+            "%s Email dispatched to %s | subject=%s | priority=%s | attachments=%d",
             prefix,
             message.recipient,
             message.subject,
             message.priority.value,
+            len(message.attachments),
         )
 
         return DeliveryResult(
@@ -174,12 +181,45 @@ class SMTPEmailProvider(BaseEmailProvider):
             )
 
         # Build MIME Message
-        mime_msg = email.mime.multipart.MIMEMultipart("alternative")
-        mime_msg["Subject"] = message.subject
-        mime_msg["From"] = message.sender
-        mime_msg["To"] = message.recipient
-        mime_msg.attach(email.mime.text.MIMEText(message.text_content, "plain"))
-        mime_msg.attach(email.mime.text.MIMEText(message.html_content, "html"))
+        if message.attachments:
+            root_msg = email.mime.multipart.MIMEMultipart("mixed")
+            root_msg["Subject"] = message.subject
+            root_msg["From"] = message.sender
+            root_msg["To"] = message.recipient
+            for k, v in message.headers.items():
+                root_msg[k] = v
+
+            alt_part = email.mime.multipart.MIMEMultipart("alternative")
+            alt_part.attach(email.mime.text.MIMEText(message.text_content, "plain", "utf-8"))
+            alt_part.attach(email.mime.text.MIMEText(message.html_content, "html", "utf-8"))
+            root_msg.attach(alt_part)
+
+            for att in message.attachments:
+                c_type = att.content_type.split(";")[0].strip().lower()
+                maintype, _, subtype = c_type.partition("/")
+                if maintype == "application" or "pdf" in subtype or "octet-stream" in subtype:
+                    part = email.mime.application.MIMEApplication(att.content, _subtype=subtype or "octet-stream")
+                elif maintype == "text":
+                    text_str = att.content.decode("utf-8", errors="replace") if isinstance(att.content, bytes) else str(att.content)
+                    part = email.mime.text.MIMEText(text_str, _subtype=subtype or "plain", _charset="utf-8")
+                else:
+                    part = email.mime.base.MIMEBase(maintype or "application", subtype or "octet-stream")
+                    part.set_payload(att.content)
+                    email.encoders.encode_base64(part)
+
+                part.add_header("Content-Disposition", "attachment", filename=att.filename)
+                root_msg.attach(part)
+
+            mime_msg = root_msg
+        else:
+            mime_msg = email.mime.multipart.MIMEMultipart("alternative")
+            mime_msg["Subject"] = message.subject
+            mime_msg["From"] = message.sender
+            mime_msg["To"] = message.recipient
+            for k, v in message.headers.items():
+                mime_msg[k] = v
+            mime_msg.attach(email.mime.text.MIMEText(message.text_content, "plain", "utf-8"))
+            mime_msg.attach(email.mime.text.MIMEText(message.html_content, "html", "utf-8"))
 
         last_err: str | None = None
         attempt_count = 0
