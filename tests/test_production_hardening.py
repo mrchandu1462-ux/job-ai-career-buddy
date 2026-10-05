@@ -176,19 +176,36 @@ def test_application_tracker_lifecycle_and_report():
     assert updated2 is not None
     assert updated2.status == ApplicationStatus.READY_TO_APPLY
 
-    # 4. List applications
+    # 4. Progress through ASSESSMENT -> INTERVIEW -> OFFER -> CLOSED
+    updated_assess = tracker.update_status(app_id=app.id, status=ApplicationStatus.ASSESSMENT, notes="Online coding assessment completed")
+    assert updated_assess is not None and updated_assess.status == ApplicationStatus.ASSESSMENT
+
+    updated_interview = tracker.update_status(app_id=app.id, status=ApplicationStatus.INTERVIEW, notes="Technical round scheduled")
+    assert updated_interview is not None and updated_interview.status == ApplicationStatus.INTERVIEW
+
+    updated_offer = tracker.update_status(app_id=app.id, status=ApplicationStatus.OFFER, notes="Offer letter received")
+    assert updated_offer is not None and updated_offer.status == ApplicationStatus.OFFER
+
+    updated_closed = tracker.update_status(app_id=app.id, status=ApplicationStatus.CLOSED, notes="Role closed")
+    assert updated_closed is not None and updated_closed.status == ApplicationStatus.CLOSED
+
+    # 5. Invalid app_id fails safely without error or corrupting database
+    invalid_res = tracker.update_status(app_id=999999, status=ApplicationStatus.REVIEWING)
+    assert invalid_res is None
+
+    # 6. List applications
     apps_list = tracker.list_applications()
     assert len(apps_list) == 1
     assert apps_list[0]["company"] == "NVIDIA"
-    assert apps_list[0]["status"] == "ready_to_apply"
+    assert apps_list[0]["status"] == "closed"
 
-    # 5. Format dashboard report
+    # 7. Format dashboard report
     report = tracker.format_best_jobs_report(jobs=[job], min_score=30.0)
     assert "Today's best jobs" in report
     assert "Junior Design Verification Engineer at NVIDIA" in report
     assert "Match:" in report
     assert "Tier: A" in report
-    assert "Status: READY_TO_APPLY" in report
+    assert "Status: CLOSED" in report
 
 
 # =============================================================================

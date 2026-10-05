@@ -24,7 +24,14 @@ from app.application.models import (
     SubmissionRecord,
 )
 from app.application.service import ApplicationPipelineService
-from app.application.tracker import ApplicationTracker
+
+
+def __getattr__(name: str):
+    if name == "ApplicationTracker":
+        from app.application.tracker import ApplicationTracker
+        return ApplicationTracker
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "ApplicationCandidateMatch",
