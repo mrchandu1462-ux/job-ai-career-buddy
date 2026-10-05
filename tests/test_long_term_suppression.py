@@ -42,6 +42,11 @@ from app.profile.models import CandidateProfile, FactBank, FactCategory, FactIte
 def _make_candidate_profile() -> CandidateProfile:
     return CandidateProfile.model_validate({
         "candidate": {
+            "name": "Chandu Saikam",
+            "email": "saikamchandu1462@gmail.com",
+            "phone": "+91 98765 43210",
+            "location": "Bengaluru, India",
+            "institution": "National Institute of Technology",
             "graduation_year": 2025,
             "experience_level": "Fresher / Entry-Level",
             "target_roles": [
@@ -69,13 +74,13 @@ def _make_fact_bank() -> FactBank:
             FactItem(
                 fact_id="EDU-001",
                 category=FactCategory.EDUCATION,
-                subject="B.Tech in EEE",
+                subject="B.Tech in ECE",
                 value={
-                    "degree": "B.Tech",
-                    "field": "Electrical & Electronics Engineering",
+                    "degree": "B.Tech in Electronics and Communication Engineering",
+                    "field": "Electronics and Communication Engineering",
                     "graduation_year": 2025,
-                    "institution": "VTU",
-                    "cgpa": "8.5/10",
+                    "institution": "National Institute of Technology",
+                    "cgpa": "7.38/10",
                 },
                 source="Degree Certificate",
                 verified=True,

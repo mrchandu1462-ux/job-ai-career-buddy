@@ -46,6 +46,7 @@ class RawJobPayload(BaseModel):
     application_url: str | None = Field(default=None, description="Direct URL to application portal.")
     discovered_at: str = Field(..., description="ISO-8601 UTC discovery timestamp.")
     content_hash: str = Field(..., min_length=1, description="SHA-256 content hash.")
+    is_fixture: bool = Field(default=False, description="True if listing originates from a sample/fixture adapter.")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional source metadata.")
 
 

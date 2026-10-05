@@ -2,6 +2,7 @@
 
 import re
 from enum import Enum
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,11 +41,27 @@ class RoleClassificationResult(BaseModel):
 class RoleClassifier:
     """Classifies semiconductor jobs into target role categories with transparent scoring."""
 
+    UNRELATED_TITLES_PATTERN: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:python\s*developer|web\s*developer|full[\s-]stack|backend|frontend|software\s*developer|"
+        r"devops|cloud\s*engineer|data\s*scientist|data\s*engineer|marketing|sales|recruiter|hr\b|"
+        r"accountant|civil\s*engineer|electrical\s*technician|electrician|facilities|wiring|maintenance|hvac)\b",
+        re.IGNORECASE,
+    )
+
     def classify(self, title: str, description: str = "") -> RoleClassificationResult:
-        """Classify a job title and description into the appropriate RoleCategory."""
-        title_lower = title.lower()
+        """Classify a job title and description into the appropriate RoleCategory with strict role identity checks."""
+        title_lower = title.lower().strip()
         desc_lower = description.lower()
         combined = f"{title_lower} {desc_lower}"
+
+        # Filter out clearly non-semiconductor / unrelated career tracks first
+        if self.UNRELATED_TITLES_PATTERN.search(title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.OTHER,
+                relevance_score=0.0,
+                matched_keywords=["unrelated role title"],
+                justification=f"Role title '{title}' belongs to a non-semiconductor / unrelated engineering track.",
+            )
 
         # 1. Verification Intern
         if re.search(r"\b(?:verification|dv)\s*intern(?:ship)?\b", title_lower) or (
@@ -80,7 +97,7 @@ class RoleClassifier:
             )
 
         # 4. Graduate Engineer Trainee (GET)
-        if re.search(r"\b(?:graduate\s*engineer\s*trainee|get|trainee\s*engineer|college\s*trainee)\b", title_lower):
+        if re.search(r"\b(?:graduate\s*engineer\s*trainee|\bget\b|trainee\s*engineer|college\s*trainee)\b", title_lower):
             return RoleClassificationResult(
                 category=RoleCategory.GRADUATE_ENGINEER_TRAINEE,
                 relevance_score=18.0,
@@ -90,7 +107,7 @@ class RoleClassifier:
 
         # 5. ASIC Verification
         if re.search(r"\basic\s*(?:verification|validation|dv)\b", title_lower) or (
-            "asic" in title_lower and "verification" in combined
+            re.search(r"\basic\b", title_lower) and re.search(r"\bverification\b", combined)
         ):
             return RoleClassificationResult(
                 category=RoleCategory.ASIC_VERIFICATION,
@@ -101,7 +118,7 @@ class RoleClassifier:
 
         # 6. SoC Verification
         if re.search(r"\bsoc\s*(?:verification|validation|dv)\b", title_lower) or (
-            "soc" in title_lower and "verification" in combined
+            re.search(r"\bsoc\b", title_lower) and re.search(r"\bverification\b", combined)
         ):
             return RoleClassificationResult(
                 category=RoleCategory.SOC_VERIFICATION,
@@ -120,7 +137,7 @@ class RoleClassifier:
             )
 
         # 8. General Design Verification / DV / Verification Engineer / ASIC Validation
-        if re.search(r"\b(?:design\s*verification|dv\s*engineer|verification\s*engineer|asic\s*validation)\b", title_lower):
+        if re.search(r"\b(?:design\s*verification|\bdv\s*engineer\b|verification\s*engineer|asic\s*validation)\b", title_lower):
             return RoleClassificationResult(
                 category=RoleCategory.DESIGN_VERIFICATION,
                 relevance_score=20.0,
@@ -146,8 +163,8 @@ class RoleClassifier:
                 justification="FPGA design/prototyping role with direct digital hardware synthesis and simulation overlap.",
             )
 
-        # 11. Embedded Systems / Firmware
-        if re.search(r"\bembedded\b", title_lower):
+        # 11. Embedded Systems / Firmware (Hardware interfacing)
+        if re.search(r"\b(?:embedded\s*systems|firmware\s*engineer|embedded\s*hardware)\b", title_lower):
             return RoleClassificationResult(
                 category=RoleCategory.EMBEDDED,
                 relevance_score=14.0,
@@ -173,17 +190,18 @@ class RoleClassifier:
                 justification="Core VLSI engineering position aligned with microelectronics fundamentals.",
             )
 
-        # 14. Verification mentioned in body or adjacent roles
-        if "verification" in combined or "uvm" in combined or "systemverilog" in combined:
+        # 14. Verification heavily featured in hardware role description
+        dv_kw_count = sum(bool(re.search(rf"\b{kw}\b", desc_lower)) for kw in ["systemverilog", "uvm", "testbench", "coverage closure", "assertions", "sva"])
+        if dv_kw_count >= 2 and any(re.search(rf"\b{hw}\b", title_lower) for hw in ["silicon", "hardware", "chip", "semiconductor", "engineer"]):
             return RoleClassificationResult(
                 category=RoleCategory.DESIGN_VERIFICATION,
                 relevance_score=15.0,
-                matched_keywords=["verification keywords in description"],
-                justification="Position title differs but description heavily features core verification responsibilities.",
+                matched_keywords=["hardware verification in description"],
+                justification="Hardware role title with strong core verification responsibilities.",
             )
 
         # 15. Other semiconductor / hardware engineering
-        if any(w in combined for w in ["semiconductor", "fpga", "hardware", "silicon", "vlsi"]):
+        if any(re.search(rf"\b{w}\b", combined) for w in ["semiconductor", "fpga", "hardware", "silicon", "vlsi"]):
             return RoleClassificationResult(
                 category=RoleCategory.OTHER,
                 relevance_score=10.0,

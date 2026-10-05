@@ -2,6 +2,9 @@
 # Note: Personal fields are structured without inventing unverified facts.
 
 candidate:
+  name: "Chandu Saikam"
+  email: "saikamchandu1462@gmail.com"
+  location: "Bengaluru, India"
   target_roles:
     - "Design Verification Engineer"
     - "Functional Verification Engineer"

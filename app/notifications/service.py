@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 def _sanitize_filename(name: str) -> str:
     """Sanitize string for safe inclusion in filenames, preventing path traversal and unsafe characters."""
+    if not name or not isinstance(name, str):
+        return "Company"
     sanitized = re.sub(r'[\\/*?:"<>|]', "", name)
     sanitized = re.sub(r"\s+", "_", sanitized.strip())
     sanitized = re.sub(r"_+", "_", sanitized)
@@ -340,37 +342,71 @@ class EmailNotificationService:
                 fingerprint=pkg_fp,
             )
 
-
             delivery_id: int | None = None
             try:
                 delivery_id = self.repo.create_email_delivery(delivery_record)
             except sqlite3.Error as exc:
                 logger.warning("Could not persist initial email delivery record: %s", exc)
 
-            # 6. Dispatch via Provider
+            # 7. Transition to SENDING state before dispatch
+            if delivery_id:
+                try:
+                    self.repo.update_email_delivery_status(
+                        delivery_id=delivery_id,
+                        status=DeliveryStatus.SENDING,
+                        attempt_increment=0,
+                    )
+                except sqlite3.Error as exc:
+                    logger.debug("Could not record SENDING status transition: %s", exc)
+
+            # 8. Dispatch via Provider with post-send failure isolation
             try:
                 res = self.provider.send_message(msg, dry_run=dry_run)
                 if delivery_id:
-                    self.repo.update_email_delivery_status(
-                        delivery_id=delivery_id,
-                        status=res.status,
-                        sent_at=res.timestamp if res.success else None,
-                        failed_at=res.timestamp if not res.success else None,
-                        last_error=res.error_message,
-                        provider_message_id=res.provider_message_id,
-                        attempt_increment=res.attempts,
-                    )
+                    try:
+                        self.repo.update_email_delivery_status(
+                            delivery_id=delivery_id,
+                            status=res.status,
+                            sent_at=res.timestamp if res.success else None,
+                            failed_at=res.timestamp if not res.success else None,
+                            last_error=res.error_message,
+                            provider_message_id=res.provider_message_id,
+                            attempt_increment=res.attempts,
+                        )
+                    except sqlite3.Error as post_db_exc:
+                        logger.critical(
+                            "CRITICAL: Message dispatched successfully via %s but DB status update failed: %s",
+                            res.provider,
+                            post_db_exc,
+                        )
+                        # Avoid duplicate retries by preserving successful send result with metadata
+                        res = DeliveryResult(
+                            success=res.success,
+                            provider=res.provider,
+                            provider_message_id=res.provider_message_id,
+                            attempts=res.attempts,
+                            status=res.status,
+                            timestamp=res.timestamp,
+                            dry_run=res.dry_run,
+                            error_message=f"Post-send DB update error: {post_db_exc}",
+                            metadata={"post_send_db_error": True, "fingerprint": pkg_fp},
+                        )
+
                 results.append(res)
-            except (sqlite3.Error, ValueError, KeyError, RuntimeError, TypeError, OSError) as exc:
-                logger.exception("Unexpected error sending email alert")
+            except Exception as exc:
+                logger.exception("Unexpected error sending email alert for job %s (%s)", pkg.job_id, pkg.company)
                 if delivery_id:
-                    self.repo.update_email_delivery_status(
-                        delivery_id=delivery_id,
-                        status=DeliveryStatus.FAILED,
-                        failed_at=datetime.now(UTC).isoformat(),
-                        last_error=str(exc),
-                        attempt_increment=1,
-                    )
+                    try:
+                        self.repo.update_email_delivery_status(
+                            delivery_id=delivery_id,
+                            status=DeliveryStatus.FAILED,
+                            failed_at=datetime.now(UTC).isoformat(),
+                            last_error=str(exc),
+                            attempt_increment=1,
+                        )
+                    except sqlite3.Error as db_fail_exc:
+                        logger.warning("Could not persist FAILED status: %s", db_fail_exc)
+
                 results.append(
                     DeliveryResult(
                         success=False,
@@ -379,6 +415,7 @@ class EmailNotificationService:
                         error_message=str(exc),
                         timestamp=datetime.now(UTC).isoformat(),
                         dry_run=dry_run,
+                        metadata={"fingerprint": pkg_fp, "error": str(exc)},
                     )
                 )
 

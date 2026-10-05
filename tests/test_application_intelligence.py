@@ -28,6 +28,11 @@ from app.profile.models import CandidateProfile, FactBank, FactCategory, FactIte
 def _make_candidate_profile() -> CandidateProfile:
     return CandidateProfile.model_validate({
         "candidate": {
+            "name": "Chandu Saikam",
+            "email": "saikamchandu1462@gmail.com",
+            "phone": "+91 98765 43210",
+            "location": "Bengaluru, India",
+            "institution": "National Institute of Technology",
             "graduation_year": 2025,
             "experience_level": "Fresher / Entry-Level",
             "target_roles": [

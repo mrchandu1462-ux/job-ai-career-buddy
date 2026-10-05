@@ -70,6 +70,11 @@ from app.profile.models import CandidateProfile, FactBank, FactCategory, FactIte
 def _make_candidate_profile() -> CandidateProfile:
     return CandidateProfile.model_validate({
         "candidate": {
+            "name": "Chandu Saikam",
+            "email": "saikamchandu1462@gmail.com",
+            "phone": "+91 98765 43210",
+            "location": "Bengaluru, India",
+            "institution": "National Institute of Technology",
             "graduation_year": 2025,
             "experience_level": "Fresher / Entry-Level",
             "target_roles": [
@@ -97,13 +102,13 @@ def _make_fact_bank() -> FactBank:
             FactItem(
                 fact_id="EDU-001",
                 category=FactCategory.EDUCATION,
-                subject="B.Tech in EEE",
+                subject="B.Tech in ECE",
                 value={
-                    "degree": "B.Tech",
-                    "field": "Electrical & Electronics Engineering",
+                    "degree": "B.Tech in Electronics and Communication Engineering",
+                    "field": "Electronics and Communication Engineering",
                     "graduation_year": 2025,
-                    "institution": "VTU",
-                    "cgpa": "8.5/10",
+                    "institution": "National Institute of Technology",
+                    "cgpa": "7.38/10",
                 },
                 source="Degree Certificate",
                 verified=True,
@@ -575,7 +580,9 @@ def test_smtp_provider_starttls_and_ssl_modes():
         assert res.success is True
         mock_smtp_cls.assert_called_once_with("smtp.gmail.com", 587, timeout=30.0)
         mock_server.ehlo.assert_called()
-        mock_server.starttls.assert_called_once()
+        assert mock_server.starttls.call_count == 1
+        _, st_kwargs = mock_server.starttls.call_args
+        assert "context" in st_kwargs
         mock_server.login.assert_called_once_with("user@example.com", "app-password-test")
         mock_server.sendmail.assert_called_once()
 
@@ -586,7 +593,12 @@ def test_smtp_provider_starttls_and_ssl_modes():
 
         res_ssl = p_465.send_message(msg)
         assert res_ssl.success is True
-        mock_ssl_cls.assert_called_once_with("smtp.gmail.com", 465, timeout=30.0)
+        mock_ssl_cls.assert_called_once()
+        ssl_args, ssl_kwargs = mock_ssl_cls.call_args
+        assert ssl_args[0] == "smtp.gmail.com"
+        assert ssl_args[1] == 465
+        assert ssl_kwargs.get("timeout") == 30.0
+        assert "context" in ssl_kwargs
         mock_ssl_server.login.assert_called_once_with("user@example.com", "app-password-test")
         mock_ssl_server.sendmail.assert_called_once()
 

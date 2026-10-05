@@ -60,12 +60,12 @@ def sample_facts() -> FactBank:
             FactItem(
                 fact_id="EDU-001",
                 category=FactCategory.EDUCATION,
-                subject="B.Tech in EEE",
+                subject="B.Tech in ECE",
                 value={
                     "degree": "B.Tech in Electronics and Communication Engineering",
                     "graduation_year": 2025,
                     "institution": "National Institute of Technology",
-                    "gpa": "8.6/10.0",
+                    "gpa": "7.38/10",
                 },
                 source="Degree Certificate",
                 verified=True,
@@ -118,6 +118,11 @@ def sample_facts() -> FactBank:
 def sample_profile() -> CandidateProfile:
     return CandidateProfile.model_validate({
         "candidate": {
+            "name": "Chandu Saikam",
+            "email": "saikamchandu1462@gmail.com",
+            "phone": "+91 98765 43210",
+            "location": "Bengaluru, India",
+            "institution": "National Institute of Technology",
             "graduation_year": 2025,
             "target_roles": ["Design Verification Engineer", "ASIC Verification Engineer"],
             "locations": {"india_priority": ["Bengaluru", "Hyderabad"], "overseas_enabled": True},

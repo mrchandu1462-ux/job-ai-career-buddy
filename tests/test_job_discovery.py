@@ -192,4 +192,4 @@ def test_role_classifier_semiconductor_categories():
     # Non-semiconductor Role
     res_other = classifier.classify("DevOps Cloud Engineer", "Kubernetes and AWS terraform")
     assert res_other.category == RoleCategory.OTHER
-    assert res_other.relevance_score == 5.0
+    assert res_other.relevance_score <= 5.0

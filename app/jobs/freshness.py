@@ -92,7 +92,12 @@ def calculate_granular_freshness(
             pub_dt = datetime.fromisoformat(clean_iso)
             if pub_dt.tzinfo is None:
                 pub_dt = pub_dt.replace(tzinfo=UTC)
-            age_hours = max(0.0, (ref_time - pub_dt).total_seconds() / 3600.0)
+            diff_sec = (ref_time - pub_dt).total_seconds()
+            # Future timestamp guard: if timestamp is >1h in future, reject as UNKNOWN
+            if diff_sec < -3600.0:
+                return FreshnessBucket.UNKNOWN, None, FreshnessConfidence.LOW, "future_timestamp_rejected"
+
+            age_hours = max(0.0, diff_sec / 3600.0)
             confidence = FreshnessConfidence.HIGH
             source_type = timestamp_source or "official_listing"
         else:
@@ -101,7 +106,11 @@ def calculate_granular_freshness(
                 year, month, day = map(int, date_match.groups())
                 # Conservative: assume 12:00 UTC to prevent artificial <=1h claims
                 pub_dt = datetime(year, month, day, 12, 0, 0, tzinfo=UTC)
-                age_hours = max(0.0, (ref_time - pub_dt).total_seconds() / 3600.0)
+                diff_sec = (ref_time - pub_dt).total_seconds()
+                if diff_sec < -3600.0:
+                    return FreshnessBucket.UNKNOWN, None, FreshnessConfidence.LOW, "future_timestamp_rejected"
+
+                age_hours = max(0.0, diff_sec / 3600.0)
                 confidence = FreshnessConfidence.MEDIUM
                 source_type = timestamp_source or "date_only_listing"
             else:
@@ -135,12 +144,27 @@ def calculate_job_freshness(
     published_at: str | None,
     current_time: datetime | None = None,
     now: datetime | None = None,
+    created_at: str | None = None,
+    updated_at: str | None = None,
 ) -> tuple[FreshnessStatus, float | None, float]:
     """
-    Backward-compatible job freshness tier calculation.
+    Backward-compatible job freshness tier calculation with created_at vs updated_at policy.
     """
+    # If created_at is old, do not let a recent updated_at masquerade as a fresh job
+    effective_ts = published_at
+    if created_at and updated_at:
+        try:
+            c_dt = datetime.fromisoformat(created_at)
+            ref_dt = now or current_time or datetime.now(UTC)
+            if c_dt.tzinfo is None:
+                c_dt = c_dt.replace(tzinfo=UTC)
+            if (ref_dt - c_dt).total_seconds() > 14 * 86400:
+                effective_ts = created_at  # Use original creation timestamp for freshness
+        except (ValueError, TypeError):
+            pass
+
     bucket, age_hours, conf_enum, _ = calculate_granular_freshness(
-        published_at=published_at,
+        published_at=effective_ts,
         current_time=current_time,
         now=now,
     )
@@ -212,7 +236,7 @@ def calculate_fresh_job_priority_score(
     project_pts = round(min(10.0, max(0.0, (project_score / 100.0) * 10.0)), 2)
 
     # 5. Fresher / Experience Fit (max 10)
-    fresher_pts = 10.0 if fresher_fit else 3.0
+    fresher_pts = 10.0 if fresher_fit else 0.0
 
     # 6. Location / Eligibility (max 5)
     if is_india or visa_supported:
@@ -239,6 +263,10 @@ def calculate_fresh_job_priority_score(
     )
     total = min(100.0, max(0.0, total))
 
+    # Strict Ineligibility capping
+    if not fresher_fit:
+        total = min(total, 45.0)
+
     is_fresh_24h = freshness_bucket in (
         FreshnessBucket.LE_1_HOUR,
         FreshnessBucket.LE_3_HOURS,
@@ -248,7 +276,9 @@ def calculate_fresh_job_priority_score(
     ) and freshness_confidence in (FreshnessConfidence.HIGH, FreshnessConfidence.MEDIUM)
 
     # Priority category mapping
-    if freshness_bucket == FreshnessBucket.OLDER_7_DAYS:
+    if not fresher_fit:
+        category = JobPriorityCategory.REJECTED
+    elif freshness_bucket == FreshnessBucket.OLDER_7_DAYS:
         category = JobPriorityCategory.EXPIRED_STALE
     elif is_fresh_24h and total >= 88.0:
         category = JobPriorityCategory.CRITICAL
@@ -259,7 +289,7 @@ def calculate_fresh_job_priority_score(
     else:
         category = JobPriorityCategory.LOW
 
-    is_fresh_24h_match = is_fresh_24h and total >= 75.0
+    is_fresh_24h_match = is_fresh_24h and total >= 75.0 and fresher_fit
 
     return FreshJobPriorityScore(
         freshness=freshness_pts,
@@ -311,12 +341,60 @@ def calculate_alert_priority(
     return AlertPriority.P3
 
 
+# Detailed Global Tech Hub Mapping for Clean Country Inference
+GLOBAL_LOCATION_COUNTRY_MAP: list[tuple[str, str, str | None]] = [
+    # India Hubs
+    (r"\b(?:bengaluru|bangalore|blr)\b", "India", "Bengaluru"),
+    (r"\b(?:hyderabad|hyd)\b", "India", "Hyderabad"),
+    (r"\b(?:chennai|madras)\b", "India", "Chennai"),
+    (r"\b(?:pune)\b", "India", "Pune"),
+    (r"\b(?:noida|greater\s*noida)\b", "India", "Noida"),
+    (r"\b(?:gurugram|gurgaon|delhi|ncr)\b", "India", "Gurugram"),
+    (r"\b(?:mumbai|bombay)\b", "India", "Mumbai"),
+    (r"\b(?:ahmedabad)\b", "India", "Ahmedabad"),
+    (r"\b(?:kochi|cochin)\b", "India", "Kochi"),
+    (r"\b(?:mysuru|mysore)\b", "India", "Mysuru"),
+    (r"\b(?:calcutta|kolkata)\b", "India", "Kolkata"),
+    (r"\b(?:india)\b", "India", None),
+
+    # Canada Hubs
+    (r"\b(?:toronto|vancouver|ottawa|montreal|waterloo|calgary|canada|remote\s*-\s*canada|remote\s*canada)\b", "Canada", None),
+
+    # UK Hubs
+    (r"\b(?:london|cambridge|bristol|edinburgh|manchester|united\s*kingdom|\buk\b|england|scotland)\b", "United Kingdom", None),
+
+    # Ireland Hubs
+    (r"\b(?:dublin|cork|limerick|galway|ireland)\b", "Ireland", None),
+
+    # Netherlands Hubs
+    (r"\b(?:eindhoven|amsterdam|delft|rotterdam|netherlands|holland)\b", "Netherlands", None),
+
+    # Singapore
+    (r"\b(?:singapore)\b", "Singapore", None),
+
+    # United States Hubs
+    (r"\b(?:san\s*jose|santa\s*clara|sunnyvale|austin|san\s*diego|folsom|chandler|hillsboro|boston|dallas|california|texas|united\s*states|\busa\b|\bus\b)\b", "United States", None),
+
+    # Germany Hubs
+    (r"\b(?:munich|dresden|stuttgart|berlin|germany|deutschland)\b", "Germany", None),
+
+    # Taiwan Hubs
+    (r"\b(?:hsinchu|taipei|tainan|taiwan)\b", "Taiwan", None),
+
+    # Japan Hubs
+    (r"\b(?:tokyo|osaka|yokohama|japan)\b", "Japan", None),
+
+    # Australia Hubs
+    (r"\b(?:sydney|melbourne|brisbane|australia)\b", "Australia", None),
+]
+
+
 def classify_geography(
     location: str | None,
     country: str | None = None,
 ) -> dict[str, Any]:
     """
-    Classify geographic market into India vs Overseas, identify tech hubs, and state details.
+    Classify geographic market into India vs Overseas with accurate country inference without unsafe fallbacks.
     """
     loc_str = (location or "").lower()
     country_str = (country or "").lower()
@@ -324,40 +402,41 @@ def classify_geography(
 
     is_india = False
     is_overseas = False
-    detected_hub = None
-    market_region = "India"
+    detected_hub: str | None = None
+    inferred_country: str = "Unknown"
 
-    # 1. Check India Priority Hubs
-    for hub in INDIA_PRIORITY_HUBS:
-        if re.search(rf"\b{hub}\b", combined):
-            is_india = True
-            detected_hub = hub.capitalize()
-            break
+    if not combined or combined in ("none", "null", "unknown"):
+        return {
+            "is_india": False,
+            "is_overseas": False,
+            "market_region": "Unknown",
+            "priority_hub": None,
+            "country": "Unknown",
+        }
 
-    if "india" in combined or "in" == country_str or "blr" in combined or "hyd" in combined:
-        is_india = True
-
-    # 2. Check Overseas
-    if not is_india:
-        for c in OVERSEAS_COUNTRIES:
-            if re.search(rf"\b{c}\b", combined):
+    # Match against global location country map
+    for pattern, c_name, hub_name in GLOBAL_LOCATION_COUNTRY_MAP:
+        if re.search(pattern, combined, re.IGNORECASE):
+            inferred_country = c_name
+            if c_name == "India":
+                is_india = True
+                detected_hub = hub_name
+            else:
                 is_overseas = True
-                market_region = c.title()
-                break
+            break
 
     if not is_india and not is_overseas:
         if any(w in combined for w in ["remote", "worldwide", "global", "anywhere"]):
-            market_region = "Global / Remote"
+            inferred_country = "Global / Remote"
         else:
-            market_region = "India"  # Default fallback if unstated
-            is_india = True
+            inferred_country = country.title() if (country and country.lower() != "unknown") else "Unknown"
 
     return {
         "is_india": is_india,
         "is_overseas": is_overseas,
-        "market_region": market_region,
+        "market_region": inferred_country,
         "priority_hub": detected_hub,
-        "country": country or ("India" if is_india else market_region),
+        "country": inferred_country,
     }
 
 

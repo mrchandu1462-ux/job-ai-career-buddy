@@ -16,8 +16,8 @@ facts:
       specialization: "Electronics and Communication Engineering"
       institution: "National Institute of Technology"
       graduation_year: 2025
-      gpa: "8.6/10.0"
-    source: "Official University Transcript"
+      gpa: "7.38/10"
+    source: "Candidate Self-Declaration"
     verified: true
     notes: "Core coursework in VLSI Design, Digital System Design, Computer Architecture, and Microprocessors."
 

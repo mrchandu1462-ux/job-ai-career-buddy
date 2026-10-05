@@ -178,41 +178,103 @@ class ApplicationPackage(BaseModel):
 class EligibilityClassifier:
     """Classifies job eligibility and verifies compatibility for a 2025 VLSI fresher."""
 
-    SENIOR_KEYWORDS: ClassVar[list[str]] = [
-        "senior", "sr.", "principal", "lead", "staff", "architect",
-        "manager", "director", "expert", "head of", "5+ years", "6+ years",
-        "7+ years", "8+ years", "10+ years",
-    ]
+    SENIOR_TITLE_PATTERN: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:senior|\bsr\.?\b|principal|lead|staff|architect|manager|director|expert|head\s*of)\b",
+        re.IGNORECASE,
+    )
 
-    GRADUATE_KEYWORDS: ClassVar[list[str]] = [
-        "graduate", "entry", "entry-level", "entry level", "fresher",
-        "new grad", "new college grad", "ncg", "campus", "trainee",
-        "get", "intern", "internship", "0-1", "0-2", "early career",
-    ]
+    UNRELATED_TITLE_PATTERN: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:python\s*developer|web\s*developer|full[\s-]stack|backend|frontend|software\s*developer|"
+        r"devops|cloud\s*engineer|data\s*scientist|data\s*engineer|marketing|sales|recruiter|hr\b|"
+        r"accountant|civil\s*engineer|electrical\s*technician|electrician|facilities|wiring|maintenance|hvac)\b",
+        re.IGNORECASE,
+    )
+
+    GRADUATE_PATTERN: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:graduate|entry[\s-]level|entry\s*level|fresher|new\s*grad|new\s*college\s*grad|\bncg\b|campus|trainee|"
+        r"\bget\b|\bintern(?:ship)?\b|0[\s-]1\s*(?:years?|yrs?)|0[\s-]2\s*(?:years?|yrs?)|early\s*career)\b",
+        re.IGNORECASE,
+    )
+
+    def _parse_experience_years(self, text: str) -> tuple[float | None, float | None]:
+        """
+        Parse required and preferred years of experience with distinction between required vs preferred.
+        Returns: (required_years_min, preferred_years_min)
+        """
+        req_min: float | None = None
+        pref_min: float | None = None
+
+        # 1. Check for required / minimum experience patterns
+        req_patterns = [
+            r"\b(?:minimum\s*(?:of\s*)?|at\s*least\s*|required\s*:\s*|basic\s*qualifications\s*:\s*)(\d+(?:\.\d+)?)\s*(?:\+|-|\s*to\s*\d+)?\s*(?:years|yrs)\b",
+            r"\b(\d+(?:\.\d+)?)\s*\+\s*(?:years|yrs)\s+(?:of\s+)?(?:required\s+)?experience\b",
+            r"\b(\d+(?:\.\d+)?)\s*(?:years|yrs)\s+(?:of\s+)?required\s+experience\b",
+            r"\b(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*(?:years|yrs)\s+(?:of\s+)?experience\b",
+            r"\b(\d+(?:\.\d+)?)\s*(?:years|yrs)\s+(?:of\s+)?experience\b",
+        ]
+
+        # 1. Check explicit "Preferred:" or "Desired:" section first
+        pref_match = re.search(r"(?:preferred|desired|plus)\s*[:\w\s]*?(\d+(?:\.\d+)?)\s*(?:\+|-|\s*to\s*\d+)?\s*(?:years|yrs)", text, re.IGNORECASE)
+        if pref_match:
+            try:
+                pref_min = float(pref_match.group(1))
+            except (ValueError, IndexError):
+                pref_min = None
+
+        # 2. Check explicit "Required:" or "Minimum:" section
+        explicit_req = re.search(r"(?:required|minimum\s*(?:of)?|at\s*least|basic\s*qualifications)\s*[:\w\s]*?(\d+(?:\.\d+)?)\s*(?:-|to|\+)?\s*(?:\d+(?:\.\d+)?)?\s*(?:years|yrs)", text, re.IGNORECASE)
+        if explicit_req:
+            try:
+                req_min = float(explicit_req.group(1))
+            except (ValueError, IndexError):
+                req_min = None
+        else:
+            # Check general required patterns
+            for pat in req_patterns:
+                m = re.search(pat, text, re.IGNORECASE)
+                if m:
+                    try:
+                        val = float(m.group(1))
+                        if val < 30.0:
+                            req_min = val
+                            break
+                    except (ValueError, IndexError):
+                        continue
+
+        return req_min, pref_min
 
     def classify(self, job: NormalizedJob, candidate_grad_year: int = 2025) -> EligibilityReport:
         text = f"{job.title} {job.requirements or ''} {job.description or ''}".lower()
-        title_lower = job.title.lower()
+        title_lower = job.title.lower().strip()
 
         reasons: list[str] = []
         warnings: list[str] = []
         is_grad_compat = True
         is_fresher_compat = True
 
-        # 1. Check senior indicators
-        is_senior = any(kw in title_lower for kw in self.SENIOR_KEYWORDS)
+        # Unrelated non-hardware career check
+        if self.UNRELATED_TITLE_PATTERN.search(title_lower):
+            return EligibilityReport(
+                tier=EligibilityTier.EXPERIENCED,
+                is_graduate_compatible=False,
+                is_fresher_compatible=False,
+                experience_required_years=None,
+                degree_compatible=False,
+                reasons=[],
+                warnings=[f"Incompatible career track '{job.title}' (non-semiconductor role)."],
+            )
+
+        # Senior Title Check
+        is_senior_title = bool(self.SENIOR_TITLE_PATTERN.search(title_lower))
+
+        # Experience Parsing
         exp_min = job.experience_min
-
-        # Check explicit experience in requirements text if not parsed
+        req_exp, _pref_exp = self._parse_experience_years(text)
         if exp_min is None:
-            exp_match = re.search(r"(\d+)\+?\s*(?:years|yrs)\s+(?:of\s+)?experience", text)
-            if exp_match:
-                try:
-                    exp_min = float(exp_match.group(1))
-                except ValueError:
-                    exp_min = None
+            exp_min = req_exp
 
-        if is_senior or (exp_min is not None and exp_min >= 4.0):
+        # Senior or Experienced Gate
+        if is_senior_title or (exp_min is not None and exp_min >= 4.0):
             tier = EligibilityTier.SENIOR
             is_grad_compat = False
             is_fresher_compat = False
@@ -221,12 +283,13 @@ class EligibilityClassifier:
             tier = EligibilityTier.EXPERIENCED
             is_grad_compat = False
             is_fresher_compat = False
-            warnings.append(f"Experienced role requiring {exp_min} years experience (Candidate is 2025 Fresher).")
-        elif "intern" in title_lower or "internship" in title_lower:
+            warnings.append(f"Experienced role requiring {exp_min:.0f}+ years experience (Candidate is 2025 Fresher).")
+        elif re.search(r"\b(?:intern|internship)\b", title_lower):
             tier = EligibilityTier.INTERNSHIP
             reasons.append("Internship opportunity matching student / early graduate profile.")
-        elif any(kw in text for kw in self.GRADUATE_KEYWORDS) or (exp_min is not None and exp_min <= 2.0):
-            tier = EligibilityTier.GRADUATE if ("grad" in text or "campus" in text or "get" in text) else EligibilityTier.ENTRY_LEVEL
+        elif self.GRADUATE_PATTERN.search(text) or (exp_min is not None and exp_min <= 2.0):
+            is_grad = bool(re.search(r"\b(?:grad(?:uate)?|campus|\bget\b|college)\b", text))
+            tier = EligibilityTier.GRADUATE if is_grad else EligibilityTier.ENTRY_LEVEL
             reasons.append("Entry-level / New College Graduate position matching 2025 batch.")
         else:
             tier = EligibilityTier.UNKNOWN
@@ -247,32 +310,37 @@ class WorkAuthClassifier:
     """Classifies work authorization and visa sponsorship feasibility based strictly on reliable evidence."""
 
     SPONSOR_POSITIVE_PATTERNS: ClassVar[list[str]] = [
-        "visa sponsorship available",
-        "visa sponsorship provided",
-        "sponsorship is available",
-        "international candidates welcome",
-        "will sponsor work visa",
-        "relocation assistance provided",
+        r"\bvisa\s*sponsorship\s*(?:is\s*)?available\b",
+        r"\bvisa\s*sponsorship\s*provided\b",
+        r"\bwill\s*sponsor\s*(?:work\s*)?visa\b",
+        r"\binternational\s*candidates\s*welcome\b",
+        r"\brelocation\s*assistance\s*provided\b",
     ]
 
     SPONSOR_NEGATIVE_PATTERNS: ClassVar[list[str]] = [
-        "no visa sponsorship",
-        "must be authorized to work",
-        "us citizen or permanent resident",
-        "without requiring sponsorship",
-        "no sponsorship provided",
-        "citizens only",
-        "security clearance required",
+        r"\bno\s*visa\s*sponsorship\b",
+        r"\bwill\s*not\s*sponsor\b",
+        r"\bsponsorship\s*(?:is\s*)?not\s*available\b",
+        r"\bmust\s*be\s*authorized\s*to\s*work\b",
+        r"\bmust\s*be\s*a\s*u\.?s\.?\s*person\b",
+        r"\bus\s*citizen\s*or\s*permanent\s*resident\b",
+        r"\bcitizens\s*only\b",
+        r"\bitar\b",
+        r"\bexport\s*control(?:led)?\b",
+        r"\bsecurity\s*clearance\s*required\b",
+        r"\bactive\s*security\s*clearance\b",
+        r"\btop\s*secret\b",
+        r"\bsecret\s*clearance\b",
     ]
 
     def classify(self, job: NormalizedJob, candidate_citizen_of: str = "India") -> WorkAuthReport:
-        country = (job.country or "India").strip()
+        country = (job.country or "Unknown").strip()
         is_domestic = country.lower() == candidate_citizen_of.lower() or "india" in (job.location or "").lower()
 
         if is_domestic:
             return WorkAuthReport(
                 status=WorkAuthStatus.NO_SPONSORSHIP_REQUIRED,
-                country=country,
+                country=country if country.lower() != "unknown" else "India",
                 is_domestic_india=True,
                 sponsorship_details="Domestic India location — Candidate holds full citizen work authorization.",
             )
@@ -281,11 +349,14 @@ class WorkAuthClassifier:
         text = f"{job.requirements or ''} {job.description or ''}".lower()
 
         warnings: list[str] = []
-        if any(p in text for p in self.SPONSOR_NEGATIVE_PATTERNS):
+        is_negative = any(re.search(pat, text, re.IGNORECASE) for pat in self.SPONSOR_NEGATIVE_PATTERNS)
+        is_positive = any(re.search(pat, text, re.IGNORECASE) for pat in self.SPONSOR_POSITIVE_PATTERNS)
+
+        if is_negative:
             status = WorkAuthStatus.LOCAL_AUTHORIZATION_REQUIRED
-            details = "Employer explicitly states local work authorization required (no visa sponsorship provided)."
-            warnings.append("Visa sponsorship NOT available for international applicants.")
-        elif any(p in text for p in self.SPONSOR_POSITIVE_PATTERNS):
+            details = "Employer explicitly states local work authorization/citizenship/ITAR clearance required (no visa sponsorship provided)."
+            warnings.append("Visa sponsorship NOT available / ITAR or domestic authorization restricted for international applicants.")
+        elif is_positive:
             status = WorkAuthStatus.SPONSORSHIP_AVAILABLE
             details = "Employer states visa sponsorship / relocation support is available for eligible candidates."
         else:
@@ -360,33 +431,48 @@ class CoverLetterGenerator:
         job: NormalizedJob,
         resume_profile: ResumeProfileType,
     ) -> CoverLetterDraft:
-        # Extract verified facts
-        edu_facts = self.fact_bank.get_facts_by_category(FactCategory.EDUCATION)
-        edu_fact = edu_facts[0] if edu_facts else None
-        degree = "B.Tech in Electronics and Communication Engineering"
-        institution = "National Institute of Technology"
-        grad_year = 2025
-        if edu_fact and isinstance(edu_fact.value, dict):
-            degree = edu_fact.value.get("degree", degree) + " in " + edu_fact.value.get("specialization", "ECE")
-            institution = edu_fact.value.get("institution", institution)
-            grad_year = edu_fact.value.get("graduation_year", grad_year)
+        # Extract verified facts (Fail-closed on missing education fact)
+        from app.profile.models import IdentityValidationError
 
-        candidate_name = getattr(self.profile.candidate, "name", "Chandu") or "Chandu"
-        candidate_email = getattr(self.profile.candidate, "email", "chandu.vlsi@gmail.com") or "chandu.vlsi@gmail.com"
-        candidate_phone = getattr(self.profile.candidate, "phone", "+91 98765 43210") or "+91 98765 43210"
-        candidate_loc = getattr(self.profile.candidate, "location", "Bengaluru, India") or "Bengaluru, India"
+        edu_facts = [f for f in self.fact_bank.get_facts_by_category(FactCategory.EDUCATION) if f.verified]
+        if not edu_facts:
+            raise IdentityValidationError("Cannot generate cover letter: verified education fact missing from FactBank.")
+        edu_fact = edu_facts[0]
+        if not isinstance(edu_fact.value, dict):
+            raise IdentityValidationError("Cannot generate cover letter: invalid education fact structure in FactBank.")
+
+        degree = edu_fact.value.get("degree", edu_fact.subject)
+        spec = edu_fact.value.get("specialization") or edu_fact.value.get("field") or "Electronics and Communication Engineering"
+        institution = edu_fact.value.get("institution")
+        if not institution:
+            raise IdentityValidationError(f"Education fact {edu_fact.fact_id} missing verified institution.")
+        grad_year = int(edu_fact.value.get("graduation_year", 2025))
+
+        candidate = getattr(self.profile, "candidate", None)
+        candidate_name = getattr(candidate, "name", None)
+        candidate_email = getattr(candidate, "email", None)
+
+        if not candidate_name or not str(candidate_name).strip():
+            raise IdentityValidationError("Cannot generate cover letter: verified candidate name is missing.")
+        if not candidate_email or not str(candidate_email).strip():
+            raise IdentityValidationError("Cannot generate cover letter: verified candidate email is missing.")
+
+        candidate_name_str = str(candidate_name).strip()
+        candidate_email_str = str(candidate_email).strip()
+        candidate_phone_str = str(getattr(candidate, "phone", "") or "").strip()
+        candidate_loc_str = str(getattr(candidate, "location", "") or "Bengaluru, India").strip()
 
         today_str = datetime.now(UTC).strftime("%B %d, %Y")
         greeting = f"Dear Hiring Team at {job.company},"
 
         opening = (
-            f"I am writing to express my strong enthusiasm for the {job.title} position at {job.company}. "
-            f"As a graduating {grad_year} engineer specializing in VLSI Design Verification, I have focused my academic "
+            f"I am writing to express my strong interest in the {job.title} position at {job.company}. "
+            f"As a {grad_year} graduate specializing in VLSI Design Verification, I have focused my academic "
             f"and project work on building robust, scalable verification environments using SystemVerilog and UVM."
         )
 
         education = (
-            f"I will be completing my {degree} from {institution} in {grad_year}. My coursework in VLSI System Design, "
+            f"I completed my {degree} in {spec} from {institution} in {grad_year}. My coursework in VLSI System Design, "
             f"Digital Logic, and Computer Architecture has provided me with a rigorous foundation in RTL design, static timing "
             f"analysis, and hardware description languages."
         )
@@ -398,21 +484,26 @@ class CoverLetterGenerator:
             "using Siemens QuestaSim and Synopsys tools."
         )
 
-
         motivation = (
-            f"I have closely followed {job.company}'s engineering leadership in advanced semiconductor design. "
-            f"I am eager to contribute my energy, verified verification methodology skills, and debugging dedication to your team in {job.location or 'India'}."
+            f"I am eager to contribute my verified verification methodology skills, constrained-random testbench development, "
+            f"and debugging dedication to the engineering team at {job.company}."
         )
 
         closing = (
             "Thank you for your time and consideration. I would welcome the opportunity to discuss how my technical preparation "
-            "and passion for verification quality align with your team's upcoming tapeout milestones."
+            "in SystemVerilog, UVM, and protocol verification aligns with your team's verification objectives."
         )
 
-        sign_off = "Sincerely,\n" + candidate_name
+        sign_off = "Sincerely,\n" + candidate_name_str
 
-        full_text = f"""{candidate_name}
-{candidate_email} | {candidate_phone} | {candidate_loc}
+        contact_header_parts = [candidate_name_str, candidate_email_str]
+        if candidate_phone_str:
+            contact_header_parts.append(candidate_phone_str)
+        if candidate_loc_str:
+            contact_header_parts.append(candidate_loc_str)
+        contact_header = " | ".join(contact_header_parts)
+
+        full_text = f"""{contact_header}
 
 {today_str}
 
@@ -446,10 +537,10 @@ Hiring Team
             company_motivation_paragraph=motivation,
             closing_paragraph=closing,
             sign_off=sign_off,
-            candidate_name=candidate_name,
-            candidate_email=candidate_email,
-            candidate_phone=candidate_phone,
-            candidate_location=candidate_loc,
+            candidate_name=candidate_name_str,
+            candidate_email=candidate_email_str,
+            candidate_phone=candidate_phone_str,
+            candidate_location=candidate_loc_str,
             full_text=full_text,
         )
 
@@ -520,11 +611,33 @@ class ApplicationPriorityEngine:
 
         raw_priority = round(w_match + w_fresh + w_elig + w_auth + w_role + w_feas, 1)
 
-        # Hard Eligibility Gating
-        if not eligibility.is_graduate_compatible or eligibility.tier in (EligibilityTier.SENIOR, EligibilityTier.EXPERIENCED):
+        # Hard Eligibility & Authorization Gating
+        is_hard_ineligible = (
+            not eligibility.is_fresher_compatible
+            or not eligibility.is_graduate_compatible
+            or eligibility.tier in (EligibilityTier.SENIOR, EligibilityTier.EXPERIENCED)
+            or not eligibility.degree_compatible
+            or work_auth.status == WorkAuthStatus.LOCAL_AUTHORIZATION_REQUIRED
+        )
+
+        if is_hard_ineligible:
             tier = ApplicationPriorityTier.SKIP
             timing = ApplicationTimingRecommendation.SKIP
-            final_priority = min(raw_priority, 45.0)
+            final_priority = min(raw_priority, 35.0)
+        elif work_auth.status == WorkAuthStatus.SPONSORSHIP_UNCLEAR:
+            # Overseas with unstated sponsorship is capped at WATCH/APPLY with WATCH_VERIFY timing
+            if raw_priority >= 75.0:
+                tier = ApplicationPriorityTier.APPLY
+                timing = ApplicationTimingRecommendation.WATCH_VERIFY
+                final_priority = min(raw_priority, 74.0)
+            elif raw_priority >= 50.0:
+                tier = ApplicationPriorityTier.WATCH
+                timing = ApplicationTimingRecommendation.WATCH_VERIFY
+                final_priority = raw_priority
+            else:
+                tier = ApplicationPriorityTier.SKIP
+                timing = ApplicationTimingRecommendation.SKIP
+                final_priority = raw_priority
         elif raw_priority >= 88.0 and (freshness_age_hours is not None and freshness_age_hours <= 12.0):
             tier = ApplicationPriorityTier.CRITICAL
             timing = ApplicationTimingRecommendation.APPLY_NOW

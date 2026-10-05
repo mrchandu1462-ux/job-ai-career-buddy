@@ -66,30 +66,51 @@ class ResumeTailoringEngine:
         company_slug = job.company.lower().replace(" ", "_")[:12]
         resume_id = f"res_{company_slug}_v{version}_{date_slug}"
 
-        # 1. Contact Info & Candidate Details
-        candidate_name = getattr(getattr(self.profile, "candidate", None), "name", None) or "Candidate Name"
-        contact_info = {
-            "location": job.location or getattr(getattr(self.profile, "candidate", None), "location", "Bengaluru, India") or "Bengaluru, India",
-            "email": getattr(getattr(self.profile, "candidate", None), "email", "candidate@vlsi-cos.internal") or "candidate@vlsi-cos.internal",
-            "phone": getattr(getattr(self.profile, "candidate", None), "phone", "+91-9876543210") or "+91-9876543210",
-            "github": "github.com/vlsi-candidate",
-            "linkedin": "linkedin.com/in/vlsi-candidate",
-        }
+        # 1. Contact Info & Candidate Details with Strict Identity Validation (Fail-Closed)
+        from app.profile.models import IdentityValidationError
 
-        # 2. Extract Verified Education Facts
+        candidate = getattr(self.profile, "candidate", None)
+        candidate_name = getattr(candidate, "name", None)
+        candidate_email = getattr(candidate, "email", None)
+
+        if not candidate_name or not str(candidate_name).strip():
+            raise IdentityValidationError("Cannot generate resume: verified candidate name is missing.")
+        if not candidate_email or not str(candidate_email).strip():
+            raise IdentityValidationError("Cannot generate resume: verified candidate email is missing.")
+
+        candidate_loc = getattr(candidate, "location", None) or "Bengaluru, India"
+        candidate_phone = getattr(candidate, "phone", None)
+
+        contact_info = {
+            "location": candidate_loc,
+            "email": str(candidate_email).strip(),
+        }
+        if candidate_phone:
+            contact_info["phone"] = str(candidate_phone).strip()
+
+        # 2. Extract Verified Education Facts (Fail-Closed if missing)
         edu_facts = [
             f for f in self.fact_bank.get_facts_by_category(FactCategory.EDUCATION)
             if f.verified
         ]
+        if not edu_facts:
+            raise IdentityValidationError("Cannot generate resume: verified education fact missing from FactBank.")
+
         education: list[ResumeEducation] = []
         for ef in edu_facts:
             val = ef.value if isinstance(ef.value, dict) else {}
+            deg_name = val.get("degree", ef.subject)
+            inst_name = val.get("institution")
+            if not inst_name:
+                raise IdentityValidationError(f"Education fact {ef.fact_id} missing verified institution.")
+            grad_yr = int(val.get("graduation_year", getattr(candidate, "graduation_year", 2025)))
+            gpa_val = val.get("gpa") or val.get("cgpa")
             education.append(
                 ResumeEducation(
-                    degree=val.get("degree", ef.subject),
-                    institution=val.get("institution", "National Institute of Technology"),
-                    graduation_year=int(val.get("graduation_year", 2025)),
-                    gpa_or_score=val.get("gpa", "8.6/10.0"),
+                    degree=deg_name,
+                    institution=inst_name,
+                    graduation_year=grad_yr,
+                    gpa_or_score=gpa_val,
                     source_fact_id=ef.fact_id,
                 )
             )
@@ -101,34 +122,29 @@ class ResumeTailoringEngine:
         ]
         source_fids: list[str] = [sf.fact_id for sf in skill_facts] + [ef.fact_id for ef in edu_facts]
 
-        tech_skills: dict[str, list[str]] = {
-            "Hardware Description & Verification": [
-                "SystemVerilog (OOP, Classes, Randomization, Constraints)",
-                "Verilog HDL",
-                "SystemVerilog Assertions (SVA)",
-                "Digital Logic & RTL Design",
-            ],
-            "Methodologies & Protocols": [
-                "UVM (Phases, Factory Overrides, uvm_config_db, TLM FIFOs)",
-                "AXI4 Protocol (AW, W, B, AR, R Channels)",
-                "Async FIFO & Clock Domain Crossing (CDC)",
-                "Constrained-Random Verification (CRV)",
-                "Functional Coverage & Covergroups",
-            ],
-            "EDA Simulation Tools": [
-                "Synopsys VCS",
-                "Siemens QuestaSim / ModelSim",
-                "Cadence Xcelium",
-                "GTKWave",
-            ],
-            "Programming & Environment": [
-                "Python",
-                "C++",
-                "Linux Shell (Bash)",
-                "Git Version Control",
-                "Makefile Automation",
-            ],
-        }
+        tech_skills: dict[str, list[str]] = {}
+        for sf in skill_facts:
+            val = sf.value if isinstance(sf.value, dict) else {}
+            sname = val.get("skill_name") or val.get("skill") or sf.subject
+            slower = sname.lower()
+
+            if "category" in val:
+                cat = val["category"]
+            elif any(k in slower for k in ["systemverilog", "verilog", "sva", "rtl", "digital logic", "vhdl"]):
+                cat = "Hardware Description & Verification"
+            elif any(k in slower for k in ["uvm", "axi", "fifo", "cdc", "crv", "coverage", "protocol", "assertion"]):
+                cat = "Methodologies & Protocols"
+            elif any(k in slower for k in ["vcs", "questasim", "modelsim", "xcelium", "gtkwave", "vivado", "quartus"]):
+                cat = "EDA Simulation Tools"
+            elif any(k in slower for k in ["python", "c++", "c language", "bash", "linux", "git", "makefile", "tcl", "perl"]):
+                cat = "Programming & Environment"
+            else:
+                cat = "Technical Skills"
+
+            tech_skills.setdefault(cat, []).append(sname)
+
+        if not tech_skills and skill_facts:
+            tech_skills = {"Technical Skills": [sf.subject for sf in skill_facts]}
 
         # 4. Extract and Prioritize Verified Projects
         proj_facts = [

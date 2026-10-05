@@ -17,6 +17,7 @@ import email.mime.text
 import logging
 import smtplib
 import sqlite3
+import ssl
 import time
 from datetime import UTC, datetime
 
@@ -229,18 +230,22 @@ class SMTPEmailProvider(BaseEmailProvider):
         if clean_password and "gmail" in self.host.lower():
             clean_password = clean_password.replace(" ", "").strip()
 
+        ssl_context = ssl.create_default_context()
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        ssl_context.check_hostname = True
+
         for attempt in range(1, self.max_retries + 1):
             attempt_count = attempt
             server = None
             try:
                 if self.use_ssl:
-                    server = smtplib.SMTP_SSL(self.host, self.port, timeout=self.timeout_seconds)
+                    server = smtplib.SMTP_SSL(self.host, self.port, timeout=self.timeout_seconds, context=ssl_context)
                     server.ehlo()
                 else:
                     server = smtplib.SMTP(self.host, self.port, timeout=self.timeout_seconds)
                     server.ehlo()
                     if self.use_tls:
-                        server.starttls()
+                        server.starttls(context=ssl_context)
                         server.ehlo()
 
                 if self.username and clean_password:

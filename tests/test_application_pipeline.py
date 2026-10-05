@@ -58,7 +58,7 @@ def fact_bank():
                 fact_id="EDU-001",
                 category=FactCategory.EDUCATION,
                 subject="B.Tech in Electronics and Communication Engineering",
-                value={"degree": "Bachelor of Technology", "institution": "National Institute of Technology", "graduation_year": 2025, "gpa": "8.6/10.0"},
+                value={"degree": "Bachelor of Technology", "institution": "National Institute of Technology", "graduation_year": 2025, "gpa": "7.38/10"},
                 verified=True,
             ),
             FactItem(

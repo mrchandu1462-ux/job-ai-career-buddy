@@ -217,11 +217,35 @@ class WorkAuthorization(BaseModel):
     )
 
 
+class IdentityValidationError(ValueError):
+    """Raised when required verified candidate identity fields are missing, preventing package generation."""
+
+
 class CandidateDetails(BaseModel):
     """Detailed candidate profile preferences and hard eligibility attributes."""
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str | None = Field(
+        default=None,
+        description="Full verified candidate name.",
+    )
+    email: str | None = Field(
+        default=None,
+        description="Verified candidate email address.",
+    )
+    phone: str | None = Field(
+        default=None,
+        description="Verified candidate contact phone number.",
+    )
+    location: str | None = Field(
+        default=None,
+        description="Candidate current residential location.",
+    )
+    institution: str | None = Field(
+        default=None,
+        description="Verified degree granting educational institution.",
+    )
     target_roles: list[str] = Field(
         ...,
         min_length=1,
