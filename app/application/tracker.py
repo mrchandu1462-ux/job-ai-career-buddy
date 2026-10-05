@@ -184,7 +184,8 @@ class ApplicationTracker:
             status_parts = status_info.split(" | Status: ")
             curr_status = status_parts[1] if len(status_parts) > 1 else "REVIEWING"
 
-            lines.append(f"{idx}. {job.title} at {job.company}")
+            clean_title = job.title.replace("—", "-").replace("–", "-")
+            lines.append(f"{idx}. {clean_title} at {job.company}")
             lines.append(f"   Match: {round(score)}")
             lines.append(f"   Freshness: {freshness_str}")
             lines.append(f"   Tier: {tier_char}")
