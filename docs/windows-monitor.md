@@ -43,9 +43,32 @@ To stop an interactive session, press `Ctrl + C` for graceful shutdown.
 
 To ensure the monitor runs automatically at user login, restarts upon unexpected system reboots, and logs output without keeping a terminal window open:
 
-### Method A: Automated PowerShell Task Registration
+### Method A: Automated One-Click PowerShell Task Registration
 
-Open **PowerShell** (no Administrator rights required for `AtLogOn` task for current user):
+Run the included registration script from PowerShell:
+
+```powershell
+# Register task to start automatically at logon and begin scanning now:
+.\scripts\register_task.ps1 -StartNow
+
+# Or customize interval (e.g., 30 minutes) and region:
+.\scripts\register_task.ps1 -Interval 30 -Region all -StartNow
+```
+
+To stop or remove the task at any time:
+```powershell
+# Stop running task:
+.\scripts\stop_task.ps1
+
+# Remove task from Windows Task Scheduler:
+.\scripts\stop_task.ps1 -Remove
+```
+
+---
+
+### Method B: Manual PowerShell Script Execution
+
+If you prefer to define the scheduled task directly via raw PowerShell:
 
 ```powershell
 $ProjectDir = (Get-Location).Path
@@ -84,7 +107,7 @@ Register-ScheduledTask `
 
 ---
 
-### Method B: Manual GUI Setup via Task Scheduler (`taskschd.msc`)
+### Method C: Manual GUI Setup via Task Scheduler (`taskschd.msc`)
 
 1. Press `Win + R`, type `taskschd.msc`, and press Enter.
 2. Click **Create Task...** in the right-hand panel.
