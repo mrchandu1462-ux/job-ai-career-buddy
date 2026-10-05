@@ -90,12 +90,14 @@ if ($Background) {
     Write-Host "[INFO] Launching Job-AI Monitor in background..." -ForegroundColor Green
     Write-Host "[INFO] Logging stdout/stderr to: $LogFile" -ForegroundColor Gray
     
+    $LogErrFile = Join-Path $LogsDir "monitor_err.log"
+    
     $StartProcessArgs = @{
         FilePath = $PythonExe
         ArgumentList = $Arguments
         WorkingDirectory = $ProjectRoot
         RedirectStandardOutput = $LogFile
-        RedirectStandardError = $LogFile
+        RedirectStandardError = $LogErrFile
         WindowStyle = "Hidden"
         PassThru = $true
     }
