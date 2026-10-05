@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from app.application.intelligence import (
     ApplicationPriorityEngine,
     ApplicationPriorityTier,
+    CareerDecisionEngine,
     EligibilityClassifier,
     WorkAuthClassifier,
 )
@@ -37,6 +38,7 @@ class ApplicationTracker:
         self.eligibility_classifier = EligibilityClassifier()
         self.work_auth_classifier = WorkAuthClassifier()
         self.priority_engine = ApplicationPriorityEngine()
+        self.decision_engine = CareerDecisionEngine()
 
     def track_job(
         self,
@@ -125,7 +127,7 @@ class ApplicationTracker:
         if jobs is None:
             jobs = self.repo.list_normalized_jobs(limit=100)
 
-        scored_items: list[tuple[NormalizedJob, float, ApplicationPriorityTier, str, str, str, str, bool, bool]] = []
+        scored_items: list[tuple[NormalizedJob, float, ApplicationPriorityTier, str, str, str, str, bool, bool, str, str]] = []
 
         for job in jobs:
             score_res = self.scoring_engine.score_job(job)
@@ -134,6 +136,13 @@ class ApplicationTracker:
 
             eligibility = self.eligibility_classifier.classify(job)
             work_auth = self.work_auth_classifier.classify(job)
+            decision_rep = self.decision_engine.evaluate_decision(
+                job=job,
+                match_score=score_res.match_score,
+                eligibility=eligibility,
+                work_auth=work_auth,
+                freshness_age_hours=job.freshness_age_hours,
+            )
             _priority_score, priority_tier, _ = self.priority_engine.compute_priority(
                 job=job,
                 match_score=score_res.match_score,
@@ -141,6 +150,10 @@ class ApplicationTracker:
                 work_auth=work_auth,
                 freshness_age_hours=job.freshness_age_hours,
             )
+
+            # Align priority tier with hard career rejection
+            if decision_rep.decision.value == "REJECT":
+                priority_tier = ApplicationPriorityTier.SKIP
 
             # Determine freshness display
             age = job.freshness_age_hours
@@ -155,7 +168,7 @@ class ApplicationTracker:
                 ApplicationPriorityTier.CRITICAL,
                 ApplicationPriorityTier.HIGH,
                 ApplicationPriorityTier.APPLY,
-            )
+            ) and decision_rep.decision.value == "APPLY"
 
             if tracked_app:
                 app_status = tracked_app.status.value.upper()
@@ -168,12 +181,12 @@ class ApplicationTracker:
                 else:
                     package_status = "NOT_GENERATED"
             else:
-                app_status = "READY_TO_APPLY" if tier_is_a else "REVIEWING"
+                app_status = "READY_TO_APPLY" if tier_is_a else ("REVIEWING" if decision_rep.decision.value == "REVIEW" else "SKIPPED")
                 has_resume = False
                 has_cover_letter = False
                 package_status = "NOT_GENERATED"
 
-            tier_label = "A" if tier_is_a else ("B" if priority_tier == ApplicationPriorityTier.WATCH else "C")
+            tier_label = "A" if tier_is_a else ("B" if priority_tier == ApplicationPriorityTier.WATCH or decision_rep.decision.value == "REVIEW" else "C")
             scored_items.append((
                 job,
                 score_res.match_score,
@@ -184,6 +197,8 @@ class ApplicationTracker:
                 package_status,
                 has_resume,
                 has_cover_letter,
+                decision_rep.decision.value,
+                decision_rep.decision_explanation,
             ))
 
         # Sort descending by match score
@@ -204,12 +219,16 @@ class ApplicationTracker:
             package_status,
             has_resume,
             has_cover_letter,
+            dec_val,
+            dec_reason,
         ) in enumerate(top_items, 1):
             location_str = job.location or "Not specified"
             clean_title = job.title.replace("—", "-").replace("–", "-")
 
             lines.append(f"{idx}. {clean_title} at {job.company}")
             lines.append(f"   Match: {round(score)}")
+            lines.append(f"   Career Decision: {dec_val}")
+            lines.append(f"   Decision Reason: {dec_reason}")
             lines.append(f"   Freshness: {freshness_str}")
             lines.append(f"   Tier: {tier_label}")
             lines.append(f"   Location: {location_str}")

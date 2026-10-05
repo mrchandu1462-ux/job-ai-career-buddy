@@ -24,6 +24,7 @@ import pytest
 from app.application.intelligence import (
     ApplicationIntelligenceService,
     ApplicationPriorityTier,
+    CareerDecision,
     CoverLetterGenerator,
     EligibilityClassifier,
     EligibilityTier,
@@ -525,3 +526,156 @@ def test_cgpa_fact_integrity_and_provenance(clean_db, verified_facts, verified_p
     plain_text = formatter.render_plaintext(tailored)
     assert "7.38/10" in plain_text
     assert "8.6" not in plain_text
+
+
+# -----------------------------------------------------------------------------
+# 12. Authoritative Career Decision Engine & Reality Check Gates (Cases A - I)
+# -----------------------------------------------------------------------------
+def test_reality_check_case_a_keyword_trap(verified_facts, verified_profile):
+    """Case A: Perfect keyword trap (Verification Marketing Associate) must REJECT as WRONG_ROLE_FAMILY."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Synopsys",
+        title="Verification Marketing Associate",
+        description="Marketing associate specializing in SystemVerilog, UVM, AXI VIP, and functional verification collateral.",
+        job_id=601,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=88.0, freshness_age_hours=2.0)
+    assert report.decision == CareerDecision.REJECT
+    assert "WRONG_ROLE_FAMILY" in report.decision_reasons
+
+
+def test_reality_check_case_b_senior_dv(verified_facts, verified_profile):
+    """Case B: Senior DV (5+ years experience) must REJECT as EXPERIENCE_TOO_HIGH regardless of high match."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Qualcomm",
+        title="Senior Design Verification Engineer",
+        description="Requires 5+ years experience in SystemVerilog, UVM testbenches, and AXI protocol verification.",
+        experience_min=5.0,
+        job_id=602,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=94.0, freshness_age_hours=2.0)
+    assert report.decision == CareerDecision.REJECT
+    assert "EXPERIENCE_TOO_HIGH" in report.decision_reasons
+
+
+def test_reality_check_case_c_python_trap(verified_facts, verified_profile):
+    """Case C: Python Developer mentioning SystemVerilog must REJECT as WRONG_ROLE_FAMILY."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Software Corp",
+        title="Python Developer",
+        description="Full stack python developer with occasional exposure to SystemVerilog scripts.",
+        job_id=603,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=60.0, freshness_age_hours=2.0)
+    assert report.decision == CareerDecision.REJECT
+    assert "WRONG_ROLE_FAMILY" in report.decision_reasons
+
+
+def test_reality_check_case_d_fresher_dv(verified_facts, verified_profile):
+    """Case D: Fresher DV role (0-1 years, SV/UVM/RTL, domestic India) must resolve to APPLY."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Texas Instruments",
+        title="Digital Verification Engineer",
+        description="Entry-level 0-1 years experience for 2025 college graduates in ECE. Hands-on SystemVerilog, UVM, RTL simulation.",
+        experience_min=0.0,
+        location="Bengaluru, India",
+        country="India",
+        job_id=604,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=75.0, freshness_age_hours=2.0)
+    assert report.decision == CareerDecision.APPLY
+    assert "ENTRY_LEVEL_ROLE" in report.decision_reasons
+    assert "DV_ROLE_MATCH" in report.decision_reasons
+
+
+def test_reality_check_case_e_overseas_ambiguous_auth(verified_facts, verified_profile):
+    """Case E: Overseas role with unstated visa sponsorship must REVIEW as OVERSEAS_AUTHORIZATION_UNKNOWN."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Nordic Semiconductor",
+        title="Design Verification Engineer",
+        description="Entry-level verification role. 0-2 years experience. Work with UVM testbenches.",
+        location="Munich, Germany",
+        country="Germany",
+        experience_min=0.0,
+        job_id=605,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=72.0, freshness_age_hours=2.0)
+    assert report.decision == CareerDecision.REVIEW
+    assert "OVERSEAS_AUTHORIZATION_UNKNOWN" in report.decision_reasons
+
+
+def test_reality_check_case_f_itar(verified_facts, verified_profile):
+    """Case F: ITAR restricted / US Person required role must REJECT as WORK_AUTH_RESTRICTED."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Defense Semi",
+        title="Hardware Verification Engineer",
+        description="US Citizen or US Person required under ITAR regulations. Security clearance required.",
+        location="Dallas, TX",
+        country="United States",
+        experience_min=0.0,
+        job_id=606,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=85.0, freshness_age_hours=2.0)
+    assert report.decision == CareerDecision.REJECT
+    assert "WORK_AUTH_RESTRICTED" in report.decision_reasons
+
+
+def test_reality_check_case_g_future_posting_timestamp(verified_facts, verified_profile):
+    """Case G: Invalid future posting timestamp must REJECT as INVALID_FUTURE_TIMESTAMP."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="NVIDIA",
+        title="ASIC Verification Engineer (NCG)",
+        description="Entry level 2025 graduate verification role.",
+        published_at="9999-12-31T23:59:59Z",
+        experience_min=0.0,
+        job_id=607,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=85.0, freshness_age_hours=2.0)
+    assert report.decision == CareerDecision.REJECT
+    assert "INVALID_FUTURE_TIMESTAMP" in report.decision_reasons
+
+
+def test_reality_check_case_h_fixture_job(verified_facts, verified_profile):
+    """Case H: Fixture provenance must never silently become APPLY; must REVIEW as FIXTURE_PROVENANCE."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Qualcomm",
+        title="Design Verification Engineer",
+        description="Entry level 2025 graduate verification role in India.",
+        location="Bengaluru, India",
+        country="India",
+        experience_min=0.0,
+        job_id=608,
+    )
+    report = intel_svc.evaluate_career_decision(job=job, match_score=85.0, freshness_age_hours=2.0, is_fixture=True)
+    assert report.decision == CareerDecision.REVIEW
+    assert "FIXTURE_PROVENANCE_REQUIRES_LIVE_VERIFICATION" in report.decision_reasons
+
+
+def test_reality_check_case_i_high_score_hard_rejection(verified_facts, verified_profile):
+    """Case I: Keyword similarity produces >90 match score, but senior requirement mandates hard REJECT."""
+    intel_svc = ApplicationIntelligenceService(verified_facts, verified_profile)
+    job = make_job(
+        company="Broadcom",
+        title="Staff Design Verification Engineer",
+        description=(
+            "Requires 8+ years of verification experience. Must have deep expertise in SystemVerilog, UVM, "
+            "AXI4, PCIe Gen5, SVA assertions, constrained-random verification, functional coverage, and QuestaSim."
+        ),
+        experience_min=8.0,
+        location="Bengaluru, India",
+        country="India",
+        job_id=609,
+    )
+    # Even with high technical match score (e.g. 96.0), career decision MUST be REJECT
+    pkg = intel_svc.create_application_package(job, match_score=96.0, freshness_age_hours=2.0)
+    assert pkg.priority_score <= 35.0
+    assert pkg.career_decision == CareerDecision.REJECT
+    assert "EXPERIENCE_TOO_HIGH" in pkg.decision_reasons

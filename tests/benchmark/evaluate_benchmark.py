@@ -9,7 +9,6 @@ from typing import Any
 
 from app.application.intelligence import (
     ApplicationIntelligenceService,
-    ApplicationPriorityTier,
 )
 from app.application.matcher import JobScoringEngine
 from app.db.models import NormalizedJob
@@ -57,14 +56,8 @@ def run_benchmark_evaluation(data_path: Path | None = None) -> dict[str, Any]:
             freshness_age_hours=2.0,
         )
 
-        # Map system decision to benchmark label
-        p_tier = pkg.priority_tier
-        if p_tier in (ApplicationPriorityTier.CRITICAL, ApplicationPriorityTier.HIGH):
-            system_decision = "APPLY"
-        elif p_tier in (ApplicationPriorityTier.APPLY, ApplicationPriorityTier.WATCH):
-            system_decision = "REVIEW"
-        else:
-            system_decision = "REJECT"
+        # Authoritative Career Decision from system
+        system_decision = pkg.career_decision.value
 
         evaluated_results.append({
             "id": item["id"],
@@ -72,7 +65,10 @@ def run_benchmark_evaluation(data_path: Path | None = None) -> dict[str, Any]:
             "company": item["company"],
             "expected": item["expected_label"],
             "system_decision": system_decision,
-            "priority_tier": p_tier.value,
+            "career_decision": pkg.career_decision.value,
+            "decision_reasons": pkg.decision_reasons,
+            "decision_explanation": pkg.decision_explanation,
+            "priority_tier": pkg.priority_tier.value,
             "priority_score": pkg.priority_score,
             "match_score": match_res.match_score,
             "eligibility_tier": pkg.eligibility.tier.value,

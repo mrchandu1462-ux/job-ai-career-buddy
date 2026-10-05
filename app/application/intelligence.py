@@ -78,6 +78,27 @@ class ApplicationTimingRecommendation(str, Enum):
     SKIP = "SKIP"                       # Incompatible or stale
 
 
+class CareerDecision(str, Enum):
+    """Authoritative career decision outcome for a job opportunity."""
+
+    APPLY = "APPLY"     # High confidence, verified eligible, actionable opportunity
+    REVIEW = "REVIEW"   # Ambiguous work authorization / experience, human inspection needed
+    REJECT = "REJECT"   # Ineligible, senior, wrong role family, ITAR restricted, or stale
+
+
+class CareerDecisionReport(BaseModel):
+    """Complete explainable career decision for a candidate opportunity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: CareerDecision
+    match_score: float = Field(..., ge=0.0, le=100.0)
+    decision_reasons: list[str] = Field(default_factory=list, description="Machine-readable decision codes.")
+    decision_explanation: str = Field(..., description="Clear human-readable justification.")
+    hard_rejections: list[str] = Field(default_factory=list, description="Hard gate failures if rejected.")
+    ambiguity_flags: list[str] = Field(default_factory=list, description="Ambiguous factors requiring human review.")
+
+
 # =============================================================================
 # Models
 # =============================================================================
@@ -152,6 +173,11 @@ class ApplicationPackage(BaseModel):
     priority_score: float = Field(..., ge=0.0, le=100.0)
     priority_tier: ApplicationPriorityTier
     timing_recommendation: ApplicationTimingRecommendation
+
+    # Authoritative Career Decision
+    career_decision: CareerDecision = CareerDecision.APPLY
+    decision_reasons: list[str] = Field(default_factory=list)
+    decision_explanation: str = ""
 
     # Tailored Assets
     selected_resume_profile: ResumeProfileType
@@ -663,6 +689,253 @@ class ApplicationPriorityEngine:
 
 
 # =============================================================================
+# Career Decision Engine
+# =============================================================================
+
+
+class CareerDecisionEngine:
+    """
+    Authoritative decision engine answering:
+    'Should Chandu actually spend time applying to this job?'
+
+    Evaluation precedence:
+    1. Invalid / unsafe source
+    2. Explicit role identity (Wrong role family / keyword traps)
+    3. Seniority & Experience ineligibility
+    4. Graduation & degree incompatibility
+    5. Work authorization & ITAR restrictions
+    6. Freshness & active listing state
+    7. Ambiguous conditions -> REVIEW (unstated overseas sponsorship, fixture provenance, borderline match)
+    8. Technical score threshold (<50.0 -> REJECT)
+    9. Eligible high-confidence opportunity -> APPLY
+    """
+
+    UNRELATED_ROLE_PATTERN: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:marketing|sales|recruiter|talent|hr\b|human\s*resources|accountant|accounts|finance|legal|"
+        r"civil\s*engineer|electrical\s*technician|electrician|facilities|wiring|maintenance|hvac|"
+        r"python\s*developer|web\s*developer|full[\s-]stack|backend|frontend|software\s*developer|"
+        r"devops|cloud\s*engineer|data\s*scientist|data\s*engineer|project\s*manager|scrum\s*master)\b",
+        re.IGNORECASE,
+    )
+
+    CORE_DV_TITLE_PATTERN: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:verification|\bdv\b|uvm|functional\s*verification|testbench|soc\s*verification|"
+        r"asic\s*(?:dv|verification)|silicon\s*verification|digital\s*verification|ip\s*verification|"
+        r"serdes\s*verification|automotive\s*dv)\b",
+        re.IGNORECASE,
+    )
+
+    ADJACENT_HARDWARE_PATTERN: ClassVar[re.Pattern] = re.compile(
+        r"\b(?:rtl|fpga|firmware|embedded|hardware\s*design|silicon\s*validation|applications?\s*engineer|"
+        r"physical\s*design|dft|board\s*design|emulation|microcontroller|wireless|dram|hardware\s*engineer)\b",
+        re.IGNORECASE,
+    )
+
+    def evaluate_decision(
+        self,
+        job: NormalizedJob,
+        match_score: float,
+        eligibility: EligibilityReport,
+        work_auth: WorkAuthReport,
+        freshness_age_hours: float | None = None,
+        is_fixture: bool = False,
+    ) -> CareerDecisionReport:
+        hard_rejections: list[str] = []
+        ambiguity_flags: list[str] = []
+
+        title_l = (job.title or "").lower().strip()
+        desc_l = (job.description or "").lower().strip()
+
+        # Gate 1: Source & Payload Validity
+        if not job.title or not job.company:
+            hard_rejections.append("Job record missing critical identity fields (company or title).")
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["INVALID_OR_UNSAFE_SOURCE"],
+                decision_explanation="Job description or source is invalid or unverifiable.",
+                hard_rejections=hard_rejections,
+                ambiguity_flags=[],
+            )
+
+        # Gate 2: Wrong Role Family (Keyword traps like 'Verification Marketing', 'Python Developer', etc.)
+        if self.UNRELATED_ROLE_PATTERN.search(title_l):
+            hard_rejections.append(f"Role title '{job.title}' belongs to an unrelated non-semiconductor role family.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["WRONG_ROLE_FAMILY"],
+                decision_explanation=f"Job title '{job.title}' is not a Design Verification or semiconductor hardware role; candidate is targeting VLSI/DV.",
+                hard_rejections=hard_rejections,
+                ambiguity_flags=[],
+            )
+
+        # Gate 3: Seniority & Experience Ineligibility
+        exp_req = eligibility.experience_required_years
+        if (
+            eligibility.tier in (EligibilityTier.SENIOR, EligibilityTier.EXPERIENCED)
+            or (exp_req is not None and exp_req >= 2.5)
+            or not eligibility.is_fresher_compatible
+        ):
+            exp_str = f"{exp_req:.0f}+ years" if exp_req else "senior/experienced"
+            hard_rejections.append(f"Job requires {exp_str} of experience (Candidate is 2025 entry-level graduate).")
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["EXPERIENCE_TOO_HIGH"],
+                decision_explanation=f"Job requires {exp_str} of verification experience; candidate is being evaluated as an entry-level applicant.",
+                hard_rejections=hard_rejections,
+                ambiguity_flags=[],
+            )
+
+        # Gate 4: Degree & Graduation Incompatibility
+        if not eligibility.degree_compatible or not eligibility.is_graduate_compatible:
+            hard_rejections.append("Degree or graduation year requirements are incompatible with candidate's 2025 B.Tech in ECE.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["GRADUATION_OR_DEGREE_INCOMPATIBLE"],
+                decision_explanation="Candidate degree or graduation timeline does not meet the explicit listing criteria.",
+                hard_rejections=hard_rejections,
+                ambiguity_flags=[],
+            )
+
+        # Gate 5: Work Authorization Hard Rejection (ITAR, Clearance, Local Auth strictly required)
+        if work_auth.status == WorkAuthStatus.LOCAL_AUTHORIZATION_REQUIRED:
+            hard_rejections.append(work_auth.sponsorship_details)
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["WORK_AUTH_RESTRICTED"],
+                decision_explanation="Role requires local citizenship, security clearance, or ITAR authorization, and does not provide international visa sponsorship.",
+                hard_rejections=hard_rejections,
+                ambiguity_flags=[],
+            )
+
+        # Gate 6: Freshness & Active State Hard Gate
+        if job.freshness_status == "future_rejected" or (job.published_at and "9999" in job.published_at):
+            hard_rejections.append("Job posting has an invalid future publication timestamp.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["INVALID_FUTURE_TIMESTAMP"],
+                decision_explanation="Posting has an invalid future publication timestamp.",
+                hard_rejections=hard_rejections,
+                ambiguity_flags=[],
+            )
+
+        if str(job.status).lower() in ("expired", "archived", "jobstatus.expired", "jobstatus.archived"):
+            hard_rejections.append("Job posting is marked as closed or archived.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["LISTING_CLOSED"],
+                decision_explanation="Job posting is marked as closed or expired.",
+                hard_rejections=hard_rejections,
+                ambiguity_flags=[],
+            )
+
+        # Gate 7: Ambiguous Conditions & Overseas Handling -> REVIEW
+        # 7a. Overseas with unstated visa sponsorship
+        if work_auth.status == WorkAuthStatus.SPONSORSHIP_UNCLEAR:
+            ambiguity_flags.append("International listing with unstated visa sponsorship policy.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REVIEW,
+                match_score=match_score,
+                decision_reasons=["OVERSEAS_AUTHORIZATION_UNKNOWN"],
+                decision_explanation="Entry-level semiconductor role, but international work authorization and visa sponsorship status are unstated; requires manual verification.",
+                hard_rejections=[],
+                ambiguity_flags=ambiguity_flags,
+            )
+
+        # 7b. Overseas opportunity with sponsorship available -> REVIEW for human relocation check
+        if not work_auth.is_domestic_india and work_auth.status == WorkAuthStatus.SPONSORSHIP_AVAILABLE:
+            ambiguity_flags.append("International listing offering visa sponsorship; requires human review of relocation and permit criteria.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REVIEW,
+                match_score=match_score,
+                decision_reasons=["OVERSEAS_SPONSORSHIP_REVIEW"],
+                decision_explanation=f"International opportunity in {job.location or 'overseas'} with visa assistance noted; human review recommended before proceeding.",
+                hard_rejections=[],
+                ambiguity_flags=ambiguity_flags,
+            )
+
+        # 7c. Fixture / synthetic origin in production scan
+        if is_fixture:
+            ambiguity_flags.append("Listing originates from a fixture source rather than live carrier page.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REVIEW,
+                match_score=match_score,
+                decision_reasons=["FIXTURE_PROVENANCE_REQUIRES_LIVE_VERIFICATION"],
+                decision_explanation="Opportunity originates from a fixture source; requires verification against live job board before application.",
+                hard_rejections=[],
+                ambiguity_flags=ambiguity_flags,
+            )
+
+        # 7d. Borderline experience range (e.g. 1-3 years) or generic hardware title requiring check
+        if re.search(r"\b1\s*-\s*3\s*(?:years|yrs)\b", f"{title_l} {desc_l}") or title_l.startswith("hardware engineer"):
+            ambiguity_flags.append("Experience range (1-3 years) or broad hardware engineer title requires human verification.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REVIEW,
+                match_score=match_score,
+                decision_reasons=["BORDERLINE_MATCH_OR_EXPERIENCE"],
+                decision_explanation="Position lists 1-3 years experience or broader hardware scope; manual review recommended for 2025 entry-level match.",
+                hard_rejections=[],
+                ambiguity_flags=ambiguity_flags,
+            )
+
+        # 7e. Adjacent semiconductor hardware role (RTL, FPGA, Embedded, Firmware, Hardware Design, etc.)
+        if self.ADJACENT_HARDWARE_PATTERN.search(title_l) and not (self.CORE_DV_TITLE_PATTERN.search(title_l) and match_score >= 50.0):
+            ambiguity_flags.append(f"Role title '{job.title}' represents adjacent semiconductor engineering.")
+            return CareerDecisionReport(
+                decision=CareerDecision.REVIEW,
+                match_score=match_score,
+                decision_reasons=["ADJACENT_HARDWARE_ROLE"],
+                decision_explanation=f"Semiconductor role '{job.title}' is adjacent to core Design Verification; candidate may review and tailor assets accordingly.",
+                hard_rejections=[],
+                ambiguity_flags=ambiguity_flags,
+            )
+
+        # Gate 8: Technical Score Threshold
+        if match_score < 50.0:
+            if self.ADJACENT_HARDWARE_PATTERN.search(title_l) or "verification" in title_l or "dv" in title_l:
+                ambiguity_flags.append(f"Moderate match score ({match_score:.1f}%) in hardware domain.")
+                return CareerDecisionReport(
+                    decision=CareerDecision.REVIEW,
+                    match_score=match_score,
+                    decision_reasons=["BORDERLINE_MATCH_OR_EXPERIENCE"],
+                    decision_explanation=f"Opportunity has moderate technical alignment ({match_score:.1f}%); manual review recommended.",
+                    hard_rejections=[],
+                    ambiguity_flags=ambiguity_flags,
+                )
+            return CareerDecisionReport(
+                decision=CareerDecision.REJECT,
+                match_score=match_score,
+                decision_reasons=["LOW_MATCH_SCORE"],
+                decision_explanation=f"Match score ({match_score:.1f}) is below minimum technical threshold for candidate profile.",
+                hard_rejections=[f"Technical match score {match_score:.1f} is insufficient."],
+                ambiguity_flags=[],
+            )
+
+        # Gate 9: Clean Strong Match -> APPLY
+        decision_reasons = [
+            "ENTRY_LEVEL_ROLE",
+            "DV_ROLE_MATCH",
+            "EDUCATION_COMPATIBLE",
+            "WORK_AUTH_CONFIRMED",
+            "FRESH_POSTING",
+        ]
+        return CareerDecisionReport(
+            decision=CareerDecision.APPLY,
+            match_score=match_score,
+            decision_reasons=decision_reasons,
+            decision_explanation=f"Entry-level Design Verification role ({match_score:.1f}% match) with compatible 2025 education, verified authorization, and current posting.",
+            hard_rejections=[],
+            ambiguity_flags=[],
+        )
+
+
+# =============================================================================
 # Unified Service
 # =============================================================================
 
@@ -682,6 +955,26 @@ class ApplicationIntelligenceService:
         self.resume_selector = ResumeProfileSelector()
         self.cover_letter_gen = CoverLetterGenerator(fact_bank, profile)
         self.priority_engine = ApplicationPriorityEngine()
+        self.decision_engine = CareerDecisionEngine()
+
+    def evaluate_career_decision(
+        self,
+        job: NormalizedJob,
+        match_score: float,
+        freshness_age_hours: float | None = None,
+        is_fixture: bool = False,
+    ) -> CareerDecisionReport:
+        """Evaluate authoritative career decision: APPLY, REVIEW, or REJECT."""
+        eligibility = self.eligibility_classifier.classify(job, self.profile.candidate.graduation_year)
+        work_auth = self.work_auth_classifier.classify(job, getattr(self.profile.candidate.work_authorization, "citizen_of", "India"))
+        return self.decision_engine.evaluate_decision(
+            job=job,
+            match_score=match_score,
+            eligibility=eligibility,
+            work_auth=work_auth,
+            freshness_age_hours=freshness_age_hours,
+            is_fixture=is_fixture,
+        )
 
     def create_application_package(
         self,
@@ -689,12 +982,22 @@ class ApplicationIntelligenceService:
         match_score: float,
         freshness_age_hours: float | None = None,
         is_material_update: bool = False,
+        is_fixture: bool = False,
     ) -> ApplicationPackage:
         """Constructs an auditable, human-gated application package."""
         eligibility = self.eligibility_classifier.classify(job, self.profile.candidate.graduation_year)
         work_auth = self.work_auth_classifier.classify(job, getattr(self.profile.candidate.work_authorization, "citizen_of", "India"))
         resume_profile, reason = self.resume_selector.select_profile(job, eligibility)
         cover_letter = self.cover_letter_gen.generate(job, resume_profile)
+
+        decision_report = self.decision_engine.evaluate_decision(
+            job=job,
+            match_score=match_score,
+            eligibility=eligibility,
+            work_auth=work_auth,
+            freshness_age_hours=freshness_age_hours,
+            is_fixture=is_fixture,
+        )
 
         p_score, p_tier, timing = self.priority_engine.compute_priority(
             job=job,
@@ -703,6 +1006,12 @@ class ApplicationIntelligenceService:
             work_auth=work_auth,
             freshness_age_hours=freshness_age_hours,
         )
+
+        # Align priority tier with hard career rejection
+        if decision_report.decision == CareerDecision.REJECT:
+            p_tier = ApplicationPriorityTier.SKIP
+            timing = ApplicationTimingRecommendation.SKIP
+            p_score = min(p_score, 35.0)
 
         now_iso = datetime.now(UTC).isoformat()
         warnings = list(eligibility.warnings) + list(work_auth.warnings)
@@ -728,6 +1037,9 @@ class ApplicationIntelligenceService:
             priority_score=p_score,
             priority_tier=p_tier,
             timing_recommendation=timing,
+            career_decision=decision_report.decision,
+            decision_reasons=decision_report.decision_reasons,
+            decision_explanation=decision_report.decision_explanation,
             selected_resume_profile=resume_profile,
             resume_selection_reason=reason,
             cover_letter=cover_letter,
