@@ -671,7 +671,7 @@ def main():
         # Tab 1: Priority Queue
         with tab_queue:
             st.subheader("🎯 Daily Prioritized Application Queue")
-            st.caption("Auto-ranked based on Technical Match (30%), Freshness (20%), Eligibility (15%), Location (15%), Relevance (10%), and Feasibility (10%).")
+            st.caption("Auto-ranked based on Technical Match (30%), Freshness (20%), Eligibility (15%), Location (15%), Relevance (10%), and Feasibility (10%). Queue items represent qualified opportunities (`READY_TO_APPLY`). Application packages (tailored resume & cover letter files) are generated on-demand via 'Initialize Application Package'.")
 
             queue_items = app_service.get_application_queue(max_age_hours=720.0, min_priority_score=40.0)
 

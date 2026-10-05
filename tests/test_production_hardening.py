@@ -206,6 +206,148 @@ def test_application_tracker_lifecycle_and_report():
     assert "Match:" in report
     assert "Tier: A" in report
     assert "Status: CLOSED" in report
+    assert "Package: NOT_GENERATED" in report
+
+
+def test_tracker_package_generation_status_semantics():
+    """
+    Verify application tracker explicitly distinguishes:
+    1. Qualification status (READY_TO_APPLY vs REVIEWING vs authoritative app status)
+    2. Package generation status (NOT_GENERATED, PARTIAL, GENERATED)
+    """
+    conn = get_connection(":memory:")
+    repo = JobRepository(conn)
+    profile = load_profile()
+    facts = load_fact_bank()
+    tracker = ApplicationTracker(repo=repo, profile=profile, fact_bank=facts)
+
+    # Job 1: Tier-A qualified opportunity, untracked (no package)
+    job_untracked = NormalizedJob(
+        company="Qualcomm India",
+        title="Design Verification Engineer",
+        location="Bengaluru, India",
+        country="India",
+        experience_min=0.0,
+        experience_max=1.0,
+        description="SystemVerilog UVM verification for fresher graduate.",
+        skills=["SystemVerilog", "UVM", "Verilog"],
+        application_url="https://qualcomm.com/dv",
+        source="career_pages",
+        first_seen="2026-10-05T10:00:00Z",
+        last_seen="2026-10-05T10:00:00Z",
+        fingerprint="qc_dv_qual",
+        freshness_age_hours=2.0,
+        freshness_status="fresh_0_6_hours",
+    )
+    job_1_id = repo.create_job(job_untracked)
+    job_untracked.id = job_1_id
+
+    # Job 2: Tracked with full package (resume + cover letter)
+    job_full_pkg = NormalizedJob(
+        company="Texas Instruments",
+        title="Digital Verification Engineer",
+        location="Bengaluru, India",
+        country="India",
+        experience_min=0.0,
+        experience_max=1.0,
+        description="SystemVerilog UVM verification engineer.",
+        skills=["SystemVerilog", "UVM"],
+        application_url="https://ti.com/dv",
+        source="career_pages",
+        first_seen="2026-10-05T10:00:00Z",
+        last_seen="2026-10-05T10:00:00Z",
+        fingerprint="ti_dv_full",
+        freshness_age_hours=3.0,
+        freshness_status="fresh_0_6_hours",
+    )
+    job_2_id = repo.create_job(job_full_pkg)
+    job_full_pkg.id = job_2_id
+    tracker.track_job(
+        job_id=job_2_id,
+        status=ApplicationStatus.READY_FOR_REVIEW,
+        tailored_resume_path="data/resumes/resume_job_2.pdf",
+        cover_letter_path="data/cover_letters/cl_job_2.txt",
+    )
+
+    # Job 3: Tracked with partial package (only resume)
+    job_partial_pkg = NormalizedJob(
+        company="Intel India",
+        title="SoC Verification Engineer",
+        location="Bengaluru, India",
+        country="India",
+        experience_min=0.0,
+        experience_max=1.0,
+        description="SoC verification engineer.",
+        skills=["SystemVerilog", "UVM"],
+        application_url="https://intel.com/dv",
+        source="career_pages",
+        first_seen="2026-10-05T10:00:00Z",
+        last_seen="2026-10-05T10:00:00Z",
+        fingerprint="intel_dv_partial",
+        freshness_age_hours=4.0,
+        freshness_status="fresh_0_6_hours",
+    )
+    job_3_id = repo.create_job(job_partial_pkg)
+    job_partial_pkg.id = job_3_id
+    tracker.track_job(
+        job_id=job_3_id,
+        status=ApplicationStatus.READY_FOR_REVIEW,
+        tailored_resume_path="data/resumes/resume_job_3.pdf",
+        cover_letter_path=None,
+    )
+
+    # Job 4: Tracked in APPLIED state (authoritative status preservation)
+    job_applied = NormalizedJob(
+        company="NXP Semiconductors",
+        title="Automotive SoC Verification Engineer",
+        location="Noida, India",
+        country="India",
+        experience_min=0.0,
+        experience_max=1.0,
+        description="Automotive SoC verification.",
+        skills=["SystemVerilog", "UVM"],
+        application_url="https://nxp.com/dv",
+        source="career_pages",
+        first_seen="2026-10-05T10:00:00Z",
+        last_seen="2026-10-05T10:00:00Z",
+        fingerprint="nxp_dv_applied",
+        freshness_age_hours=5.0,
+        freshness_status="fresh_0_6_hours",
+    )
+    job_4_id = repo.create_job(job_applied)
+    job_applied.id = job_4_id
+    tracker.track_job(
+        job_id=job_4_id,
+        status=ApplicationStatus.APPLIED,
+        tailored_resume_path="data/resumes/resume_job_4.pdf",
+        cover_letter_path="data/cover_letters/cl_job_4.txt",
+    )
+
+    # Test Case 1: Untracked qualified opportunity -> READY_TO_APPLY + NOT_GENERATED
+    rep_1 = tracker.format_best_jobs_report(jobs=[job_untracked], min_score=30.0)
+    assert "Status: READY_TO_APPLY" in rep_1
+    assert "Package: NOT_GENERATED" in rep_1
+    assert "Resume: ✓" not in rep_1
+
+    # Test Case 2: Full package generated -> GENERATED + Resume: ✓ + Cover Letter: ✓
+    rep_2 = tracker.format_best_jobs_report(jobs=[job_full_pkg], min_score=30.0)
+    assert "Status: READY_FOR_REVIEW" in rep_2
+    assert "Package: GENERATED" in rep_2
+    assert "Resume: ✓" in rep_2
+    assert "Cover Letter: ✓" in rep_2
+
+    # Test Case 3: Partial package -> PARTIAL + Resume: ✓ + Cover Letter: ✗
+    rep_3 = tracker.format_best_jobs_report(jobs=[job_partial_pkg], min_score=30.0)
+    assert "Status: READY_FOR_REVIEW" in rep_3
+    assert "Package: PARTIAL" in rep_3
+    assert "Resume: ✓" in rep_3
+    assert "Cover Letter: ✗" in rep_3
+
+    # Test Case 4: Authoritative application status APPLIED is preserved
+    rep_4 = tracker.format_best_jobs_report(jobs=[job_applied], min_score=30.0)
+    assert "Status: APPLIED" in rep_4
+    assert "Status: READY_TO_APPLY" not in rep_4
+    assert "Package: GENERATED" in rep_4
 
 
 # =============================================================================

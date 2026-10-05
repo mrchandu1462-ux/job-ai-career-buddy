@@ -125,7 +125,7 @@ class ApplicationTracker:
         if jobs is None:
             jobs = self.repo.list_normalized_jobs(limit=100)
 
-        scored_items: list[tuple[NormalizedJob, float, ApplicationPriorityTier, str, str]] = []
+        scored_items: list[tuple[NormalizedJob, float, ApplicationPriorityTier, str, str, str, str, bool, bool]] = []
 
         for job in jobs:
             score_res = self.scoring_engine.score_job(job)
@@ -149,21 +149,42 @@ class ApplicationTracker:
             else:
                 freshness_str = job.freshness_status or "Unknown"
 
-            # Check if tracked
+            # Check if tracked and determine package generation status
             tracked_app = self.repo.get_application_by_job_id(job.id) if job.id else None
             tier_is_a = priority_tier in (
                 ApplicationPriorityTier.CRITICAL,
                 ApplicationPriorityTier.HIGH,
                 ApplicationPriorityTier.APPLY,
             )
-            app_status = (
-                tracked_app.status.value.upper()
-                if tracked_app
-                else ("READY_TO_APPLY" if tier_is_a else "REVIEWING")
-            )
+
+            if tracked_app:
+                app_status = tracked_app.status.value.upper()
+                has_resume = bool(tracked_app.tailored_resume_path)
+                has_cover_letter = bool(tracked_app.cover_letter_path)
+                if has_resume and has_cover_letter:
+                    package_status = "GENERATED"
+                elif has_resume or has_cover_letter:
+                    package_status = "PARTIAL"
+                else:
+                    package_status = "NOT_GENERATED"
+            else:
+                app_status = "READY_TO_APPLY" if tier_is_a else "REVIEWING"
+                has_resume = False
+                has_cover_letter = False
+                package_status = "NOT_GENERATED"
 
             tier_label = "A" if tier_is_a else ("B" if priority_tier == ApplicationPriorityTier.WATCH else "C")
-            scored_items.append((job, score_res.match_score, priority_tier, freshness_str, f"Tier: {tier_label} | Status: {app_status}"))
+            scored_items.append((
+                job,
+                score_res.match_score,
+                priority_tier,
+                freshness_str,
+                tier_label,
+                app_status,
+                package_status,
+                has_resume,
+                has_cover_letter,
+            ))
 
         # Sort descending by match score
         scored_items.sort(key=lambda x: x[1], reverse=True)
@@ -173,24 +194,33 @@ class ApplicationTracker:
             return "Today's best jobs\n-----------------\nNo qualifying jobs found matching criteria."
 
         lines = ["Today's best jobs", "-----------------", ""]
-        for idx, (job, score, tier, freshness_str, status_info) in enumerate(top_items, 1):
-            tier_is_a = tier in (
-                ApplicationPriorityTier.CRITICAL,
-                ApplicationPriorityTier.HIGH,
-                ApplicationPriorityTier.APPLY,
-            )
-            tier_char = "A" if tier_is_a else ("B" if tier == ApplicationPriorityTier.WATCH else "C")
+        for idx, (
+            job,
+            score,
+            _tier,
+            freshness_str,
+            tier_label,
+            curr_status,
+            package_status,
+            has_resume,
+            has_cover_letter,
+        ) in enumerate(top_items, 1):
             location_str = job.location or "Not specified"
-            status_parts = status_info.split(" | Status: ")
-            curr_status = status_parts[1] if len(status_parts) > 1 else "REVIEWING"
-
             clean_title = job.title.replace("—", "-").replace("–", "-")
+
             lines.append(f"{idx}. {clean_title} at {job.company}")
             lines.append(f"   Match: {round(score)}")
             lines.append(f"   Freshness: {freshness_str}")
-            lines.append(f"   Tier: {tier_char}")
+            lines.append(f"   Tier: {tier_label}")
             lines.append(f"   Location: {location_str}")
             lines.append(f"   Status: {curr_status}")
+            lines.append(f"   Package: {package_status}")
+            if package_status == "GENERATED":
+                lines.append("   Resume: ✓")
+                lines.append("   Cover Letter: ✓")
+            elif package_status == "PARTIAL":
+                lines.append(f"   Resume: {'✓' if has_resume else '✗'}")
+                lines.append(f"   Cover Letter: {'✓' if has_cover_letter else '✗'}")
             if job.application_url:
                 lines.append(f"   Apply: {job.application_url}")
             lines.append("")
