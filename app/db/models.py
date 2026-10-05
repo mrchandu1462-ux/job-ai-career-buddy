@@ -9,12 +9,18 @@ class ApplicationStatus(str, Enum):
     """Lifecycle stages for human-in-the-loop application tracking."""
 
     DISCOVERED = "discovered"
+    REVIEWING = "reviewing"
     SHORTLISTED = "shortlisted"
     PREPARING = "preparing"
     READY_FOR_REVIEW = "ready_for_review"
+    READY_TO_APPLY = "ready_to_apply"
     APPROVED = "approved"
     APPLIED = "applied"
+    ASSESSMENT = "assessment"
+    INTERVIEW = "interview"
+    OFFER = "offer"
     REJECTED = "rejected"
+    CLOSED = "closed"
     WITHDRAWN = "withdrawn"
     FAILED = "failed"
 

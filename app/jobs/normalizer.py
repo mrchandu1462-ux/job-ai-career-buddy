@@ -1,6 +1,7 @@
 """Job normalizer: extracts structured attributes, skills, experience, and fingerprints."""
 
 import re
+import urllib.parse
 from datetime import UTC, datetime
 
 from app.db.models import JobStatus, NormalizedJob
@@ -62,6 +63,31 @@ def generate_job_fingerprint(
     return base
 
 
+def clean_application_url(url: str | None) -> str | None:
+    """Strip marketing/tracking query parameters from application URLs for clean deduplication."""
+    if not url or not isinstance(url, str):
+        return None
+    cleaned = url.strip()
+    if not cleaned or not cleaned.startswith(("http://", "https://")):
+        return cleaned
+
+    try:
+        parsed = urllib.parse.urlparse(cleaned)
+        query_dict = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        # Drop tracking keys
+        tracking_keys = {
+            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+            "trackingid", "refid", "ref", "src", "fbclid", "gclid", "trk",
+            "originalsubdomain", "source", "_hsenc", "_hsmi", "mc_cid", "mc_eid",
+        }
+        filtered_query = [(k, v) for k, v in query_dict if k.lower() not in tracking_keys]
+        new_query = urllib.parse.urlencode(filtered_query)
+        new_parsed = parsed._replace(query=new_query)
+        return urllib.parse.urlunparse(new_parsed)
+    except (ValueError, TypeError, AttributeError):
+        return cleaned
+
+
 def extract_vlsi_skills(text: str) -> list[str]:
     """Scan text against standard VLSI skill patterns and return unique matched skills."""
     matched = []
@@ -72,30 +98,69 @@ def extract_vlsi_skills(text: str) -> list[str]:
 
 
 def extract_experience_requirements(text: str) -> tuple[float | None, float | None]:
-    """Extract minimum and maximum years of experience from job text."""
-    # Pattern: "0-2 years", "0 to 1 year", "1-3 yrs"
+    """
+    Extract minimum and maximum years of required experience from job text.
+    Correctly distinguishes fresher/entry-level, 0-1, 1-2, 2-3, 3-5, and 5+ years,
+    and isolates mandatory requirements from preferred qualifications.
+    """
+    if not text or not str(text).strip():
+        return None, None
+
+    # Check if text separates required vs preferred sections
+    req_section = text
+    req_match = re.search(
+        r"(?:required|basic|minimum)\s*(?:qualifications|requirements|experience)(.*?)(?:preferred|desirable|bonus|$)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if req_match:
+        req_section = req_match.group(1)
+
+    # 1. Fresher / Entry Level / Graduate keywords in required section or title
+    if re.search(
+        r"\b(?:fresher|fresh\s*grad(?:uate)?|entry[\s-]level|new\s*grad(?:uate)?|college\s*grad(?:uate)?|campus\s*hiring|intern(?:ship)?|trainee|0\s*years?)\b",
+        req_section,
+        re.IGNORECASE,
+    ):
+        return 0.0, 1.0
+
+    # 2. Pattern: "0-2 years", "0 to 1 year", "1-3 yrs", "2-4 years", "3-5 years", "5-8 years"
     range_match = re.search(
         r"(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*(?:years?|yrs?)",
-        text,
+        req_section,
         re.IGNORECASE,
     )
     if range_match:
         return float(range_match.group(1)), float(range_match.group(2))
 
-    # Pattern: "2+ years", "at least 3 years", "minimum 1 year"
+    # 3. Pattern: "2+ years", "at least 3 years", "minimum 1 year", "5+ years"
     min_match = re.search(
         r"(?:minimum|at least|min\.?)\s*(\d+(?:\.\d+)?)\s*(?:years?|yrs?)",
-        text,
+        req_section,
         re.IGNORECASE,
     )
     if min_match:
         return float(min_match.group(1)), None
 
-    plus_match = re.search(r"(\d+(?:\.\d+)?)\+\s*(?:years?|yrs?)", text, re.IGNORECASE)
+    plus_match = re.search(r"(\d+(?:\.\d+)?)\+\s*(?:years?|yrs?)", req_section, re.IGNORECASE)
     if plus_match:
         return float(plus_match.group(1)), None
 
-    # Fresher keywords
+    # Fallback search across full text if not found in isolated required section
+    if req_section != text:
+        range_fallback = re.search(
+            r"(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*(?:years?|yrs?)",
+            text,
+            re.IGNORECASE,
+        )
+        if range_fallback:
+            return float(range_fallback.group(1)), float(range_fallback.group(2))
+
+        plus_fallback = re.search(r"(\d+(?:\.\d+)?)\+\s*(?:years?|yrs?)", text, re.IGNORECASE)
+        if plus_fallback:
+            return float(plus_fallback.group(1)), None
+
+    # Final check for fresher keywords in entire text
     if re.search(r"\b(?:fresher|entry[\s-]level|intern(?:ship)?|trainee|college\s*grad(?:uate)?|recent\s*grad(?:uate)?|new\s*grad)\b", text, re.IGNORECASE):
         return 0.0, 1.0
 
@@ -135,9 +200,6 @@ def detect_seniority_flag(title: str, exp_min: float | None = None) -> bool:
     )
 
 
-
-
-
 def normalize_job_listing(
     company: str,
     title: str,
@@ -160,6 +222,9 @@ def normalize_job_listing(
     exp_min, exp_max = extract_experience_requirements(raw_text)
     grad_min, grad_max = extract_graduation_years(raw_text)
     skills = extract_vlsi_skills(raw_text)
+
+    # Clean URL parameters to eliminate tracking queries
+    cleaned_app_url = clean_application_url(application_url)
 
     # Infer employment type if not provided
     if not employment_type or employment_type == "Full-time":
@@ -200,7 +265,7 @@ def normalize_job_listing(
         description=raw_text.strip(),
         requirements=None,
         skills=skills,
-        application_url=application_url,
+        application_url=cleaned_app_url,
         source=source,
         status=JobStatus.ACTIVE,
         first_seen=now_iso,

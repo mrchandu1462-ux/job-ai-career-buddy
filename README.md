@@ -135,6 +135,23 @@ python -m app.jobs.monitor --region all --hours 24 --interval 60
 .\scripts\start_monitor.ps1 -Region all -IntervalMinutes 60
 ```
 
+### Application Tracking & Daily Best Jobs CLI
+```powershell
+# Display Today's Best Jobs executive summary dashboard
+python -m app.application.tracker --report
+
+# List all tracked job applications
+python -m app.application.tracker --list
+
+# Filter applications by lifecycle stage
+python -m app.application.tracker --list --status reviewing
+python -m app.application.tracker --list --status ready_to_apply
+python -m app.application.tracker --list --status applied
+
+# Update an application's lifecycle status and candidate notes
+python -m app.application.tracker --update-id 1 --new-status applied --notes "Applied on company careers portal"
+```
+
 ---
 
 ## Quickstart

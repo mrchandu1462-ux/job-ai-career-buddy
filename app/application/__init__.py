@@ -24,6 +24,7 @@ from app.application.models import (
     SubmissionRecord,
 )
 from app.application.service import ApplicationPipelineService
+from app.application.tracker import ApplicationTracker
 
 __all__ = [
     "ApplicationCandidateMatch",
@@ -35,6 +36,7 @@ __all__ = [
     "ApplicationPriorityEngine",
     "ApplicationPriorityTier",
     "ApplicationTimingRecommendation",
+    "ApplicationTracker",
     "CategorizedQuestionItem",
     "CoverLetterDraft",
     "CoverLetterGenerator",

@@ -20,6 +20,31 @@ class ActiveStatusVerifier:
 
     def __init__(self, stale_threshold_days: int = 45):
         self.stale_threshold_days = stale_threshold_days
+        self._expired_patterns = [
+            r"\b(?:position|opening|job|requisition)\s*(?:is\s*|has\s*been\s*)?(?:closed|expired|filled|no\s*longer\s*available|cancelled|withdrawn)\b",
+            r"\bapplications?\s*(?:are\s*)?(?:closed|ended|no\s*longer\s*accepted)\b",
+            r"\bno\s*longer\s*accepting\s*applications\b",
+            r"\bthis\s*position\s*is\s*no\s*longer\s*(?:open|available|accepting\s*applications)\b",
+            r"\bthe\s*job\s*you\s*are\s*looking\s*for\s*(?:has\s*expired|is\s*no\s*longer\s*available)\b",
+            r"\bdeadline\s*has\s*passed\b",
+            r"\bthis\s*job\s*(?:posting\s*)?has\s*expired\b",
+            r"\b(?:404|not found|page not found)\b.*(?:job|position|no longer available)",
+        ]
+
+    def is_obviously_closed(self, text: str) -> bool:
+        """Check if job description or page snippet contains obvious closed/expired signals."""
+        if not text:
+            return False
+        return any(re.search(pattern, text, re.IGNORECASE) for pattern in self._expired_patterns)
+
+    def is_valid_url(self, url: str | None) -> bool:
+        """Validate if URL is a functional web URL and not javascript, placeholder, or fragment."""
+        if not url or not isinstance(url, str):
+            return False
+        cleaned = url.strip()
+        if not cleaned.startswith(("http://", "https://")):
+            return False
+        return not (cleaned.startswith("javascript:") or cleaned == "#")
 
     def verify(
         self,
@@ -41,10 +66,13 @@ class ActiveStatusVerifier:
 
         # 1. Check for explicit closed/expired wording in job description
         expired_patterns = [
-            r"\b(?:position|opening|job)\s*(?:is\s*)?(?:closed|expired|filled|no\s*longer\s*available)\b",
-            r"\bapplications?\s*(?:are\s*)?closed\b",
+            r"\b(?:position|opening|job|requisition)\s*(?:is\s*|has\s*been\s*)?(?:closed|expired|filled|no\s*longer\s*available|cancelled|withdrawn)\b",
+            r"\bapplications?\s*(?:are\s*)?(?:closed|ended|no\s*longer\s*accepted)\b",
+            r"\bno\s*longer\s*accepting\s*applications\b",
+            r"\bthis\s*position\s*is\s*no\s*longer\s*(?:open|available|accepting\s*applications)\b",
+            r"\bthe\s*job\s*you\s*are\s*looking\s*for\s*(?:has\s*expired|is\s*no\s*longer\s*available)\b",
             r"\bdeadline\s*has\s*passed\b",
-            r"\bthis\s*job\s*has\s*expired\b",
+            r"\bthis\s*job\s*(?:posting\s*)?has\s*expired\b",
         ]
         for pattern in expired_patterns:
             if re.search(pattern, raw_text, re.IGNORECASE):
@@ -59,7 +87,7 @@ class ActiveStatusVerifier:
         # 2. Check portal status signal if provided
         if portal_status:
             ps_lower = portal_status.lower()
-            if ps_lower in ["closed", "expired", "filled", "inactive"]:
+            if ps_lower in ["closed", "expired", "filled", "inactive", "cancelled"]:
                 return ActiveVerificationResult(
                     status=JobActiveStatus.EXPIRED,
                     is_active=False,
@@ -118,12 +146,14 @@ class ActiveStatusVerifier:
 
         # 5. Check if verified on official company career portal or direct application URL
         app_url = getattr(job, "application_url", None) or getattr(job, "source_url", None)
+        is_valid_url = self.is_valid_url(app_url)
+
         has_official_source = any(
             source.lower().startswith(prefix)
             for prefix in ["company", "official", "careers_", "portal", "workday", "greenhouse"]
         )
 
-        if has_official_source and app_url:
+        if has_official_source and is_valid_url:
             return ActiveVerificationResult(
                 status=JobActiveStatus.ACTIVE,
                 is_active=True,
@@ -132,7 +162,7 @@ class ActiveStatusVerifier:
                 reason="Verified active listing on official company careers portal with direct application URL.",
             )
 
-        if app_url:
+        if is_valid_url:
             return ActiveVerificationResult(
                 status=JobActiveStatus.ACTIVE,
                 is_active=True,
@@ -141,13 +171,13 @@ class ActiveStatusVerifier:
                 reason="Listing has valid direct application URL and recent discovery timestamp.",
             )
 
-        # If no application URL or evidence of active state
+        # If no valid application URL or evidence of active state
         return ActiveVerificationResult(
             status=JobActiveStatus.UNKNOWN,
             is_active=False,
             verification_timestamp=now_iso,
             verification_source=source,
-            reason="Active status unknown: listing lacks direct application link or recent verification evidence.",
+            reason="Active status unknown: listing lacks valid direct application link or recent verification evidence.",
         )
 
 

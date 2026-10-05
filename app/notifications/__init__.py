@@ -15,7 +15,7 @@ from app.notifications.models import (
     EmailPriority,
 )
 from app.notifications.renderer import EmailTemplateRenderer
-from app.notifications.service import EmailNotificationService
+from app.notifications.service import EmailNotificationService, sanitize_filename
 
 __all__ = [
     "BaseEmailProvider",
@@ -30,4 +30,5 @@ __all__ = [
     "MockEmailProvider",
     "SMTPEmailProvider",
     "get_email_provider",
+    "sanitize_filename",
 ]

@@ -10,10 +10,15 @@ class RoleCategory(str, Enum):
     """Categorized role classifications for VLSI/semiconductor careers."""
 
     DESIGN_VERIFICATION = "DESIGN_VERIFICATION"
+    DV = "DV"
     FUNCTIONAL_VERIFICATION = "FUNCTIONAL_VERIFICATION"
     ASIC_VERIFICATION = "ASIC_VERIFICATION"
     SOC_VERIFICATION = "SOC_VERIFICATION"
     RTL_DESIGN = "RTL_DESIGN"
+    FPGA = "FPGA"
+    EMBEDDED = "EMBEDDED"
+    SEMICONDUCTOR_GRADUATE = "SEMICONDUCTOR_GRADUATE"
+    VLSI = "VLSI"
     VERIFICATION_INTERN = "VERIFICATION_INTERN"
     RTL_INTERN = "RTL_INTERN"
     VLSI_INTERN = "VLSI_INTERN"
@@ -132,7 +137,43 @@ class RoleClassifier:
                 justification="Adjacent RTL / Digital Design role where verification skills provide strong foundation.",
             )
 
-        # 10. Verification mentioned in body or adjacent roles
+        # 10. FPGA Engineer
+        if re.search(r"\bfpga\b", title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.FPGA,
+                relevance_score=15.0,
+                matched_keywords=["fpga"],
+                justification="FPGA design/prototyping role with direct digital hardware synthesis and simulation overlap.",
+            )
+
+        # 11. Embedded Systems / Firmware
+        if re.search(r"\bembedded\b", title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.EMBEDDED,
+                relevance_score=14.0,
+                matched_keywords=["embedded"],
+                justification="Embedded systems engineering role with hardware-software interfacing scope.",
+            )
+
+        # 12. Semiconductor Graduate / Fresher Program
+        if re.search(r"\b(?:semiconductor|vlsi|silicon|hardware)\s*(?:graduate|fresher|entry|campus)\b", combined):
+            return RoleClassificationResult(
+                category=RoleCategory.SEMICONDUCTOR_GRADUATE,
+                relevance_score=18.0,
+                matched_keywords=["semiconductor graduate"],
+                justification="Specialized semiconductor/VLSI graduate onboarding program targeting entry-level talent.",
+            )
+
+        # 13. General VLSI Role
+        if re.search(r"\bvlsi\b", title_lower):
+            return RoleClassificationResult(
+                category=RoleCategory.VLSI,
+                relevance_score=16.0,
+                matched_keywords=["vlsi"],
+                justification="Core VLSI engineering position aligned with microelectronics fundamentals.",
+            )
+
+        # 14. Verification mentioned in body or adjacent roles
         if "verification" in combined or "uvm" in combined or "systemverilog" in combined:
             return RoleClassificationResult(
                 category=RoleCategory.DESIGN_VERIFICATION,
@@ -141,7 +182,7 @@ class RoleClassifier:
                 justification="Position title differs but description heavily features core verification responsibilities.",
             )
 
-        # 11. Other semiconductor / hardware engineering
+        # 15. Other semiconductor / hardware engineering
         if any(w in combined for w in ["semiconductor", "fpga", "hardware", "silicon", "vlsi"]):
             return RoleClassificationResult(
                 category=RoleCategory.OTHER,

@@ -262,12 +262,16 @@ class JobRepository:
                 ) from exc
             raise
 
+    create_job = insert_normalized_job
+
     def get_normalized_job(self, job_id: int) -> NormalizedJob | None:
         """Fetch a normalized job by id."""
         query = "SELECT * FROM normalized_jobs WHERE id = ?"
         cursor = self.conn.execute(query, (job_id,))
         row = cursor.fetchone()
         return self._row_to_normalized_job(row) if row else None
+
+    get_job_by_id = get_normalized_job
 
     def get_normalized_job_by_fingerprint(self, fingerprint: str) -> NormalizedJob | None:
         """Fetch a normalized job by unique fingerprint."""

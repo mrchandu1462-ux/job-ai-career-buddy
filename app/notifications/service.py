@@ -44,6 +44,9 @@ def _sanitize_filename(name: str) -> str:
     return sanitized.strip("._") or "Company"
 
 
+sanitize_filename = _sanitize_filename
+
+
 class EmailNotificationService:
     """High-level service managing automated career alert emails and daily digests."""
 
